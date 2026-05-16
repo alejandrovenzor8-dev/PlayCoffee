@@ -1,0 +1,22 @@
+{
+  "name": "playcoffee",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "cd apps/backend && npx prisma generate",
+    "db:migrate": "cd apps/backend && npx prisma migrate dev",
+    "db:studio": "cd apps/backend && npx prisma studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
