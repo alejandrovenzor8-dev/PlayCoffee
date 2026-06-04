@@ -283,6 +283,8 @@ model TableArea {
   branchId    String
   name        String
   description String?
+  color       String?   @default("#3b82f6") // Hex color code
+  order       Int       @default(0) // Display order
   floorPlan   Json?     // SVG or JSON layout data
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())

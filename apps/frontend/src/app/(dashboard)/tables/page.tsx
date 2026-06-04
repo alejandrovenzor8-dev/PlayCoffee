@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTablesStore } from "@/store/tables.store";
+import { useAreasStore } from "@/store/areas.store";
 import { useTableLayout } from "@/hooks/useTableLayout";
 import { TableCanvas } from "@/components/tables/TableCanvas";
 import { LayoutEditor } from "@/components/tables/LayoutEditor";
@@ -10,53 +12,46 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import {
-  Settings,
-  RefreshCw,
-  Grid3x3,
-} from "lucide-react";
-import type { RestaurantTable, TableArea } from "@/types/orders.types";
+import { Loader2, Settings, RefreshCw, Grid3x3 } from "lucide-react";
+import { areasApi } from "@/lib/api";
+import type { RestaurantTable } from "@/types/orders.types";
 
-// Mock areas - En producción vendría del backend
-const mockAreas: TableArea[] = [
-  {
-    id: "area-1",
-    branchId: "branch-1",
-    name: "Planta Baja",
-    tables: [],
-  },
-  {
-    id: "area-2",
-    branchId: "branch-1",
-    name: "Terraza",
-    tables: [],
-  },
-  {
-    id: "area-3",
-    branchId: "branch-1",
-    name: "Área Infantil",
-    tables: [],
-  },
-];
+// TODO: Obtener branchId del contexto de autenticación
+const BRANCH_ID = "branch-1";
 
 export default function TablesPage() {
-  const [selectedAreaId, setSelectedAreaId] = useState<string>(mockAreas[0]?.id || "");
-  const { isEditMode, setEditMode, setAreas, selectedTable, selectTable } = useTablesStore();
+  const { areas, setAreas, selectedAreaId, selectArea } = useAreasStore();
+  const { isEditMode, setEditMode, selectedTable, selectTable } = useTablesStore();
   const {
     tables,
     loadTables,
     updateTableLocal,
     saveLayout,
     cancelChanges,
-  } = useTableLayout(selectedAreaId);
+  } = useTableLayout(selectedAreaId || "");
 
-  // Cargar áreas y mesas inicialmente
+  // Cargar áreas activas
+  const { data: areasData, isLoading: areasLoading } = useQuery({
+    queryKey: ["areas", "active", BRANCH_ID],
+    queryFn: () => areasApi.getActive(BRANCH_ID),
+  });
+
+  // Cargar áreas y seleccionar la primera al inicio
   useEffect(() => {
-    setAreas(mockAreas);
+    if (areasData && areasData.length > 0) {
+      setAreas(areasData);
+      if (!selectedAreaId) {
+        selectArea(areasData[0].id);
+      }
+    }
+  }, [areasData, setAreas, selectedAreaId, selectArea]);
+
+  // Cargar mesas cuando cambia el área seleccionada
+  useEffect(() => {
     if (selectedAreaId) {
       loadTables();
     }
-  }, [selectedAreaId, setAreas, loadTables]);
+  }, [selectedAreaId, loadTables]);
 
   // Manejar guardado de cambios
   const handleSave = async () => {
@@ -171,41 +166,72 @@ export default function TablesPage() {
       )}
 
       {/* Tabs por áreas */}
-      <Tabs value={selectedAreaId} onValueChange={setSelectedAreaId} className="flex-1 flex flex-col">
-        <TabsList className="w-full justify-start">
-          {mockAreas.map((area) => (
-            <TabsTrigger key={area.id} value={area.id}>
-              {area.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      {areasLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : areas.length === 0 ? (
+        <Card className="p-8 text-center">
+          <p className="text-muted-foreground mb-4">
+            No hay áreas configuradas. Crea áreas desde Configuración &gt; Áreas para comenzar.
+          </p>
+          <Button onClick={() => window.location.href = "/settings/areas"}>
+            Ir a Configuración de Áreas
+          </Button>
+        </Card>
+      ) : (
+        <Tabs
+          value={selectedAreaId || areas[0]?.id}
+          onValueChange={selectArea}
+          className="flex-1 flex flex-col"
+        >
+          <TabsList className="w-full justify-start">
+            {areas.map((area) => (
+              <TabsTrigger
+                key={area.id}
+                value={area.id}
+                style={{
+                  borderBottomColor: area.color,
+                  borderBottomWidth: selectedAreaId === area.id ? "3px" : "0",
+                }}
+              >
+                {area.name}
+                {area._count && area._count.tables > 0 && (
+                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                    {area._count.tables}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-        {mockAreas.map((area) => (
-          <TabsContent
-            key={area.id}
-            value={area.id}
-            className="flex-1 border rounded-lg overflow-hidden mt-4"
-          >
-            {isEditMode ? (
-              <LayoutEditor
-                tables={(tables || []).filter((t) => t.areaId === area.id)}
-                onTablesUpdate={handleTablesUpdate}
-                onSave={handleSave}
-                onCancel={handleCancel}
-              />
-            ) : (
-              <TableCanvas
-                tables={(tables || []).filter((t) => t.areaId === area.id)}
-                isEditMode={false}
-                selectedTableId={selectedTable?.id}
-                onTableSelect={selectTable}
-                onTableUpdate={handleTableUpdate}
-                areaName={area.name}
-              />
-            )}
-          </TabsContent>
-        ))}
-      </Tabs>
+          {areas.map((area) => (
+            <TabsContent
+              key={area.id}
+              value={area.id}
+              className="flex-1 border rounded-lg overflow-hidden mt-4"
+            >
+              {isEditMode ? (
+                <LayoutEditor
+                  tables={(tables || []).filter((t) => t.areaId === area.id)}
+                  onTablesUpdate={handleTablesUpdate}
+                  onSave={handleSave}
+                  onCancel={handleCancel}
+                />
+              ) : (
+                <TableCanvas
+                  tables={(tables || []).filter((t) => t.areaId === area.id)}
+                  isEditMode={false}
+                  selectedTableId={selectedTable?.id}
+                  onTableSelect={selectTable}
+                  onTableUpdate={handleTableUpdate}
+                  areaName={area.name}
+                />
+              )}
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
     </div>
   );
 }

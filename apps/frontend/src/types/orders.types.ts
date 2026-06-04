@@ -87,5 +87,15 @@ export interface TableArea {
   id: string;
   branchId: string;
   name: string;
-  tables: RestaurantTable[];
+  description?: string;
+  color?: string;
+  order: number;
+  isActive: boolean;
+  floorPlan?: any;
+  createdAt?: string;
+  updatedAt?: string;
+  tables?: RestaurantTable[];
+  _count?: {
+    tables: number;
+  };
 }

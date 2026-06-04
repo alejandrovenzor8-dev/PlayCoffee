@@ -100,6 +100,25 @@ export const tablesApi = {
     api.delete(`/tables/${id}`).then((r) => r.data.data),
 };
 
+export const areasApi = {
+  getAll: (branchId: string) =>
+    api.get("/areas", { params: { branchId } }).then((r) => r.data.data),
+  getActive: (branchId: string) =>
+    api.get("/areas/active", { params: { branchId } }).then((r) => r.data.data),
+  getOne: (id: string) =>
+    api.get(`/areas/${id}`).then((r) => r.data.data),
+  create: (branchId: string, data: unknown) =>
+    api.post("/areas", data, { params: { branchId } }).then((r) => r.data.data),
+  update: (id: string, data: unknown) =>
+    api.patch(`/areas/${id}`, data).then((r) => r.data.data),
+  reorder: (branchId: string, areaIds: string[]) =>
+    api.post("/areas/reorder", { areaIds }, { params: { branchId } }).then((r) => r.data.data),
+  toggleActive: (id: string) =>
+    api.patch(`/areas/${id}/toggle-active`).then((r) => r.data.data),
+  delete: (id: string) =>
+    api.delete(`/areas/${id}`).then((r) => r.data.data),
+};
+
 export const paymentsApi = {
   create: (data: unknown) => api.post("/payments", data).then((r) => r.data.data),
   getByOrder: (orderId: string) =>

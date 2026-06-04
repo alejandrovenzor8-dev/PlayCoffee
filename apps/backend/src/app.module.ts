@@ -6,6 +6,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
+import { AreasModule } from './modules/areas/areas.module';
 import { TablesModule } from './modules/tables/tables.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -23,6 +24,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     BranchesModule,
     UsersModule,
     ProductsModule,
+    AreasModule,
     TablesModule,
     OrdersModule,
     PaymentsModule,
