@@ -301,9 +301,13 @@ model RestaurantTable {
   number      String
   capacity    Int         @default(4)
   status      TableStatus @default(AVAILABLE)
-  posX        Float?      // Position on floor plan
-  posY        Float?
-  shape       String?     // "circle" | "rect"
+  posX        Float?      // Position X on floor plan (pixels)
+  posY        Float?      // Position Y on floor plan (pixels)
+  width       Float?      @default(120) // Width in pixels
+  height      Float?      @default(120) // Height in pixels
+  rotation    Float?      @default(0) // Rotation in degrees
+  shape       String?     @default("rect") // "circle" | "rect" | "oval"
+  color       String?     // Custom color hex code
   isActive    Boolean     @default(true)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt

@@ -10,5 +10,9 @@ export class CreateTableDto {
   @ApiPropertyOptional() @IsEnum(TableStatus) @IsOptional() status?: TableStatus;
   @ApiPropertyOptional() @IsNumber() @IsOptional() @Type(() => Number) posX?: number;
   @ApiPropertyOptional() @IsNumber() @IsOptional() @Type(() => Number) posY?: number;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Type(() => Number) width?: number;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Type(() => Number) height?: number;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Type(() => Number) rotation?: number;
   @ApiPropertyOptional() @IsString() @IsOptional() shape?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() color?: string;
 }

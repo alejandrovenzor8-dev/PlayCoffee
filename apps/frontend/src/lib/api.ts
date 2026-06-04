@@ -86,10 +86,18 @@ export const ordersApi = {
 export const tablesApi = {
   getAll: (branchId?: string) =>
     api.get("/tables", { params: { branchId } }).then((r) => r.data.data),
+  getByArea: (areaId: string) =>
+    api.get("/tables", { params: { areaId } }).then((r) => r.data.data),
   getAreas: (branchId?: string) =>
     api.get("/tables/areas", { params: { branchId } }).then((r) => r.data.data),
   updateStatus: (id: string, status: string) =>
     api.patch(`/tables/${id}/status`, { status }).then((r) => r.data.data),
+  update: (id: string, data: unknown) =>
+    api.patch(`/tables/${id}`, data).then((r) => r.data.data),
+  create: (data: unknown) =>
+    api.post("/tables", data).then((r) => r.data.data),
+  delete: (id: string) =>
+    api.delete(`/tables/${id}`).then((r) => r.data.data),
 };
 
 export const paymentsApi = {

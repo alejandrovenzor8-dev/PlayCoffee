@@ -73,7 +73,11 @@ export interface RestaurantTable {
   status: TableStatus;
   posX?: number;
   posY?: number;
-  shape?: "circle" | "rect";
+  width?: number;
+  height?: number;
+  rotation?: number;
+  shape?: "circle" | "rect" | "oval";
+  color?: string;
   isActive: boolean;
   area?: { id: string; name: string };
   orders?: Order[];
