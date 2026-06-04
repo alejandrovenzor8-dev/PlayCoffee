@@ -96,7 +96,7 @@ export function useTableLayout(areaId: string) {
 
   // Cancelar cambios
   const cancelChanges = useCallback(() => {
-    setLocalTables(tables);
+    setLocalTables(tables || []);
     resetChanges();
   }, [tables, resetChanges]);
 
@@ -112,7 +112,7 @@ export function useTableLayout(areaId: string) {
 
         const newTable = response.data;
         setLocalTables((prev) => [...prev, newTable]);
-        setTables([...tables, newTable]);
+        setTables([...(tables || []), newTable]);
 
         toast({
           title: "Mesa creada",
@@ -144,7 +144,7 @@ export function useTableLayout(areaId: string) {
 
         const updated = localTables.filter((t) => t.id !== tableId);
         setLocalTables(updated);
-        setTables(tables.filter((t) => t.id !== tableId));
+        setTables((tables || []).filter((t) => t.id !== tableId));
 
         toast({
           title: "Mesa eliminada",

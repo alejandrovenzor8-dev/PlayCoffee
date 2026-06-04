@@ -80,6 +80,7 @@ export default function TablesPage() {
 
   // Actualizar múltiples tablas (para el LayoutEditor)
   const handleTablesUpdate = (updatedTables: RestaurantTable[]) => {
+    if (!tables) return;
     updatedTables.forEach((table) => {
       const original = tables.find((t) => t.id === table.id);
       if (original) {
@@ -100,10 +101,10 @@ export default function TablesPage() {
 
   // Estadísticas rápidas
   const stats = {
-    total: tables.length,
-    available: tables.filter((t) => t.status === "AVAILABLE").length,
-    occupied: tables.filter((t) => t.status === "OCCUPIED").length,
-    reserved: tables.filter((t) => t.status === "RESERVED").length,
+    total: tables?.length || 0,
+    available: tables?.filter((t) => t.status === "AVAILABLE").length || 0,
+    occupied: tables?.filter((t) => t.status === "OCCUPIED").length || 0,
+    reserved: tables?.filter((t) => t.status === "RESERVED").length || 0,
   };
 
   return (
@@ -187,14 +188,14 @@ export default function TablesPage() {
           >
             {isEditMode ? (
               <LayoutEditor
-                tables={tables.filter((t) => t.areaId === area.id)}
+                tables={(tables || []).filter((t) => t.areaId === area.id)}
                 onTablesUpdate={handleTablesUpdate}
                 onSave={handleSave}
                 onCancel={handleCancel}
               />
             ) : (
               <TableCanvas
-                tables={tables.filter((t) => t.areaId === area.id)}
+                tables={(tables || []).filter((t) => t.areaId === area.id)}
                 isEditMode={false}
                 selectedTableId={selectedTable?.id}
                 onTableSelect={selectTable}
