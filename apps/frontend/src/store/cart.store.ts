@@ -25,11 +25,12 @@ function computeItemPrice(
   modifiers: Array<{ modifier: Modifier; quantity: number }>,
   quantity: number
 ): number {
+  const productPrice = Number(product.price);
   const modifiersTotal = modifiers.reduce(
-    (sum, m) => sum + m.modifier.price * m.quantity,
+    (sum, m) => sum + Number(m.modifier.price) * m.quantity,
     0
   );
-  return (product.price + modifiersTotal) * quantity;
+  return (productPrice + modifiersTotal) * quantity;
 }
 
 export const useCartStore = create<CartState>((set, get) => ({
@@ -61,7 +62,7 @@ export const useCartStore = create<CartState>((set, get) => ({
         id: `${product.id}-${Date.now()}`,
         product,
         quantity: 1,
-        unitPrice: product.price,
+        unitPrice: Number(product.price),
         totalPrice: computeItemPrice(product, modifiers, 1),
         selectedModifiers: modifiers,
       };

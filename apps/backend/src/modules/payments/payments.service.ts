@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaymentStatus, OrderStatus } from '@prisma/client';
+import { PaymentStatus, OrderStatus, TableStatus } from '@prisma/client';
 
 @Injectable()
 export class PaymentsService {
@@ -43,6 +43,13 @@ export class PaymentsService {
         where: { id: dto.orderId },
         data: { status: OrderStatus.COMPLETED, completedAt: new Date() },
       });
+
+      if (order.tableId) {
+        await this.prisma.restaurantTable.update({
+          where: { id: order.tableId },
+          data: { status: TableStatus.AVAILABLE },
+        });
+      }
     }
 
     return payment;

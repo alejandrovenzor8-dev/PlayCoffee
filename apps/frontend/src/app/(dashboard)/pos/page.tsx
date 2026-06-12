@@ -1,27 +1,32 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { productsApi, ordersApi, paymentsApi } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
 import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
 import type { Product, Category } from "@/types/pos.types";
+import type { RestaurantTable } from "@/types/orders.types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  ShoppingCart, Trash2, Plus, Minus, Search, CreditCard, Banknote, X, Loader2,
+  ShoppingCart, Trash2, Plus, Minus, Search, CreditCard, Banknote, X, Loader2, Table2,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 
 export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -32,12 +37,18 @@ export default function PosPage() {
 
   const cart = useCartStore();
   const { user } = useAuthStore();
+  const branchId = getActiveBranchId(user);
 
   useEffect(() => {
-    Promise.all([productsApi.getAll(), productsApi.getCategories()])
-      .then(([prods, cats]) => {
+    Promise.all([
+      productsApi.getAll(),
+      productsApi.getCategories(),
+      tablesApi.getAll(branchId),
+    ])
+      .then(([prods, cats, restaurantTables]) => {
         setProducts(prods);
         setCategories(cats);
+        setTables(restaurantTables);
       })
       .catch(() => {
         // Mock data for demo
@@ -56,9 +67,16 @@ export default function PosPage() {
           { id: "p7", categoryId: "3", name: "Cheesecake", price: 75, taxRate: 0, isActive: true, isFeatured: false },
           { id: "p8", categoryId: "3", name: "Brownie", price: 60, taxRate: 0, isActive: true, isFeatured: false },
         ] as Product[]);
+        setTables([]);
       })
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [branchId]);
+
+  const availableTables = tables.filter((table) =>
+    ["AVAILABLE", "RESERVED"].includes(table.status)
+  );
+
+  const selectedTable = tables.find((table) => table.id === cart.tableId);
 
   const filtered = products.filter((p) => {
     const matchCat = !selectedCategory || p.categoryId === selectedCategory;
@@ -71,7 +89,7 @@ export default function PosPage() {
     setIsProcessing(true);
     try {
       const orderData = {
-        branchId: getActiveBranchId(user),
+        branchId,
         tableId: cart.tableId,
         notes: cart.notes,
         items: cart.items.map((i) => ({
@@ -93,6 +111,12 @@ export default function PosPage() {
         method: paymentMethod,
         amount: cart.total(),
       });
+
+      setTables((currentTables) =>
+        currentTables.map((table) =>
+          table.id === cart.tableId ? { ...table, status: "AVAILABLE" } : table
+        )
+      );
 
       cart.clearCart();
       setPaymentOpen(false);
@@ -189,6 +213,35 @@ export default function PosPage() {
             <span className="font-semibold text-sm">Carrito</span>
           </div>
           <Badge variant="secondary">{cart.itemCount()} items</Badge>
+        </div>
+
+        <div className="border-b p-3 space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Table2 className="h-4 w-4" />
+            Mesa
+          </div>
+          <Select
+            value={cart.tableId ?? "takeaway"}
+            onValueChange={(value) => cart.setTableId(value === "takeaway" ? undefined : value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Seleccionar mesa" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="takeaway">Sin mesa / para llevar</SelectItem>
+              {availableTables.map((table) => (
+                <SelectItem key={table.id} value={table.id}>
+                  Mesa {table.number}
+                  {table.area?.name ? ` - ${table.area.name}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedTable && (
+            <p className="text-xs text-muted-foreground">
+              Capacidad: {selectedTable.capacity} personas
+            </p>
+          )}
         </div>
 
         {/* Cart items */}
