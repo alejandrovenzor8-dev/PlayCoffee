@@ -14,12 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Loader2, Settings, RefreshCw, Grid3x3 } from "lucide-react";
 import { areasApi } from "@/lib/api";
+import { getActiveBranchId } from "@/lib/branch";
+import { useAuthStore } from "@/store/auth.store";
 import type { RestaurantTable } from "@/types/orders.types";
 
-// TODO: Obtener branchId del contexto de autenticación
-const BRANCH_ID = "branch-1";
-
 export default function TablesPage() {
+  const { user } = useAuthStore();
+  const branchId = getActiveBranchId(user);
   const { areas, setAreas, selectedAreaId, selectArea } = useAreasStore();
   const { isEditMode, setEditMode, selectedTable, selectTable } = useTablesStore();
   const {
@@ -32,8 +33,8 @@ export default function TablesPage() {
 
   // Cargar áreas activas
   const { data: areasData, isLoading: areasLoading } = useQuery({
-    queryKey: ["areas", "active", BRANCH_ID],
-    queryFn: () => areasApi.getActive(BRANCH_ID),
+    queryKey: ["areas", "active", branchId],
+    queryFn: () => areasApi.getActive(branchId),
   });
 
   // Cargar áreas y seleccionar la primera al inicio

@@ -22,9 +22,9 @@ export function useTableLayout(areaId: string) {
   const loadTables = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await tablesApi.getByArea(areaId);
-      setTables(response.data);
-      setLocalTables(response.data);
+      const tables = await tablesApi.getByArea(areaId);
+      setTables(tables);
+      setLocalTables(tables);
     } catch (error) {
       console.error("Error loading tables:", error);
       toast({
@@ -105,12 +105,11 @@ export function useTableLayout(areaId: string) {
     async (tableData: Partial<RestaurantTable>) => {
       setLoading(true);
       try {
-        const response = await tablesApi.create({
+        const newTable = await tablesApi.create({
           areaId,
           ...tableData,
         } as any);
 
-        const newTable = response.data;
         setLocalTables((prev) => [...prev, newTable]);
         setTables([...(tables || []), newTable]);
 

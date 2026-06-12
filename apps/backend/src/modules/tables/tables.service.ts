@@ -8,11 +8,12 @@ import { TableStatus } from '@prisma/client';
 export class TablesService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(branchId?: string) {
+  async findAll(branchId?: string, areaId?: string) {
     return this.prisma.restaurantTable.findMany({
       where: {
         deletedAt: null,
         isActive: true,
+        ...(areaId ? { areaId } : {}),
         ...(branchId ? { area: { branchId } } : {}),
       },
       include: {

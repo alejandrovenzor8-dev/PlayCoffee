@@ -17,7 +17,13 @@ export class TablesController {
 
   @Get()
   @ApiQuery({ name: 'branchId', required: false })
-  findAll(@Query('branchId') branchId?: string) { return this.tablesService.findAll(branchId); }
+  @ApiQuery({ name: 'areaId', required: false })
+  findAll(
+    @Query('branchId') branchId?: string,
+    @Query('areaId') areaId?: string,
+  ) {
+    return this.tablesService.findAll(branchId, areaId);
+  }
 
   @Get('areas')
   @ApiQuery({ name: 'branchId', required: false })

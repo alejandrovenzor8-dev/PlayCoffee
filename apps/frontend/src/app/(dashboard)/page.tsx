@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { reportsApi } from "@/lib/api";
+import { getActiveBranchId } from "@/lib/branch";
+import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/page-header";
@@ -71,11 +73,11 @@ function KpiCard({
 }
 
 export default function DashboardPage() {
+  const { user } = useAuthStore();
   const [kpis, setKpis] = useState<Kpis | null>(null);
 
   useEffect(() => {
-    // In a real app, use actual branchId from auth store
-    reportsApi.getKpis("demo-branch").catch(() => {
+    reportsApi.getKpis(getActiveBranchId(user)).catch(() => {
       // Use mock data when API is unavailable
       setKpis({
         today: { revenue: 8750, orders: 43 },
@@ -91,7 +93,7 @@ export default function DashboardPage() {
       activeTables: 7,
       activeChildren: 12,
     });
-  }, []);
+  }, [user]);
 
   return (
     <div className="space-y-6">

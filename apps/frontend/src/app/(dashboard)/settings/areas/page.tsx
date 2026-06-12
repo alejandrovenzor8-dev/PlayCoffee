@@ -17,15 +17,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Loader2 } from "lucide-react";
 import { areasApi } from "@/lib/api";
+import { getActiveBranchId } from "@/lib/branch";
 import { useAreasStore } from "@/store/areas.store";
+import { useAuthStore } from "@/store/auth.store";
 import { toast } from "@/components/ui/use-toast";
 import type { TableArea } from "@/types/orders.types";
 
-// TODO: Obtener branchId del contexto de autenticación
-const BRANCH_ID = "branch-1";
-
 export default function AreasPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const branchId = getActiveBranchId(user);
   const { areas, setAreas } = useAreasStore();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -34,8 +35,8 @@ export default function AreasPage() {
 
   // Cargar áreas
   const { data, isLoading, error } = useQuery({
-    queryKey: ["areas", BRANCH_ID],
-    queryFn: () => areasApi.getAll(BRANCH_ID),
+    queryKey: ["areas", branchId],
+    queryFn: () => areasApi.getAll(branchId),
   });
 
   useEffect(() => {
@@ -46,9 +47,9 @@ export default function AreasPage() {
 
   // Mutación para crear área
   const createMutation = useMutation({
-    mutationFn: (data: Partial<TableArea>) => areasApi.create(BRANCH_ID, data),
+    mutationFn: (data: Partial<TableArea>) => areasApi.create(branchId, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["areas", BRANCH_ID] });
+      queryClient.invalidateQueries({ queryKey: ["areas", branchId] });
       toast({
         title: "Área creada",
         description: "El área se ha creado exitosamente",
@@ -68,7 +69,7 @@ export default function AreasPage() {
     mutationFn: ({ id, data }: { id: string; data: Partial<TableArea> }) =>
       areasApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["areas", BRANCH_ID] });
+      queryClient.invalidateQueries({ queryKey: ["areas", branchId] });
       toast({
         title: "Área actualizada",
         description: "Los cambios se han guardado exitosamente",
@@ -85,9 +86,9 @@ export default function AreasPage() {
 
   // Mutación para reordenar áreas
   const reorderMutation = useMutation({
-    mutationFn: (areaIds: string[]) => areasApi.reorder(BRANCH_ID, areaIds),
+    mutationFn: (areaIds: string[]) => areasApi.reorder(branchId, areaIds),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["areas", BRANCH_ID] });
+      queryClient.invalidateQueries({ queryKey: ["areas", branchId] });
       toast({
         title: "Orden actualizado",
         description: "El orden de las áreas se ha actualizado",
@@ -106,7 +107,7 @@ export default function AreasPage() {
   const toggleActiveMutation = useMutation({
     mutationFn: (id: string) => areasApi.toggleActive(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["areas", BRANCH_ID] });
+      queryClient.invalidateQueries({ queryKey: ["areas", branchId] });
       toast({
         title: "Estado actualizado",
         description: "El estado del área se ha actualizado",
@@ -125,7 +126,7 @@ export default function AreasPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => areasApi.delete(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["areas", BRANCH_ID] });
+      queryClient.invalidateQueries({ queryKey: ["areas", branchId] });
       toast({
         title: "Área eliminada",
         description: "El área se ha eliminado exitosamente",

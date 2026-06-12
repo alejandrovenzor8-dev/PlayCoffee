@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { productsApi, ordersApi, paymentsApi } from "@/lib/api";
+import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
 import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
@@ -70,7 +71,7 @@ export default function PosPage() {
     setIsProcessing(true);
     try {
       const orderData = {
-        branchId: user?.branchId ?? "demo-branch",
+        branchId: getActiveBranchId(user),
         tableId: cart.tableId,
         notes: cart.notes,
         items: cart.items.map((i) => ({
