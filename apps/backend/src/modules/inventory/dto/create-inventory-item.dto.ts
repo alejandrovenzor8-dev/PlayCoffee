@@ -4,6 +4,7 @@ import { MovementType } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreateInventoryItemDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() branchId?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() productId?: string;
   @ApiProperty() @IsString() name: string;
   @ApiPropertyOptional() @IsString() @IsOptional() unit?: string;
@@ -14,6 +15,7 @@ export class CreateInventoryItemDto {
 }
 
 export class InventoryMovementDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() branchId?: string;
   @ApiProperty() @IsString() inventoryItemId: string;
   @ApiProperty({ enum: MovementType }) @IsEnum(MovementType) type: MovementType;
   @ApiProperty() @IsNumber() @Min(0.001) @Type(() => Number) quantity: number;

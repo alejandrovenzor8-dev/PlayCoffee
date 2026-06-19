@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ChildAccessService } from './child-access.service';
 import { CreateChildAccessDto } from './dto/create-child-access.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Child Access')
 @ApiBearerAuth('JWT')
@@ -12,17 +13,50 @@ export class ChildAccessController {
   constructor(private readonly childAccessService: ChildAccessService) {}
 
   @Get('active')
-  findActive() { return this.childAccessService.findActive(); }
+  findActive(
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.childAccessService.findActive(userBranchId ?? branchId);
+  }
 
   @Get('overstaying')
-  getOverstaying() { return this.childAccessService.getOverstaying(); }
+  getOverstaying(
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.childAccessService.getOverstaying(userBranchId ?? branchId);
+  }
 
   @Get()
-  findAll() { return this.childAccessService.findAll(); }
+  findAll(
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.childAccessService.findAll(userBranchId ?? branchId);
+  }
 
   @Post()
-  register(@Body() dto: CreateChildAccessDto) { return this.childAccessService.register(dto); }
+  register(
+    @Body() dto: CreateChildAccessDto,
+    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
+  ) {
+    const branchId = userBranchId ?? dto.branchId;
+    if (!branchId) throw new BadRequestException('branchId is required');
+    return this.childAccessService.register({
+      ...dto,
+      branchId,
+    }, userId);
+  }
 
   @Patch(':id/checkout')
-  checkout(@Param('id') id: string) { return this.childAccessService.checkout(id); }
+  checkout(
+    @Param('id') id: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
+  ) {
+    return this.childAccessService.checkout(id, userBranchId ?? branchId, userId);
+  }
 }

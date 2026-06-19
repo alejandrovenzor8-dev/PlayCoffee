@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Payments')
 @ApiBearerAuth('JWT')
@@ -12,7 +13,9 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
-  create(@Body() dto: CreatePaymentDto) { return this.paymentsService.create(dto); }
+  create(@Body() dto: CreatePaymentDto, @CurrentUser('id') userId: string) {
+    return this.paymentsService.create(dto, userId);
+  }
 
   @Get('order/:orderId')
   findByOrder(@Param('orderId') orderId: string) {

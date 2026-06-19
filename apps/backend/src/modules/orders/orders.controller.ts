@@ -26,8 +26,9 @@ export class OrdersController {
   findAll(
     @Query('branchId') branchId?: string,
     @Query('status') status?: OrderStatus,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.ordersService.findAll(branchId, status);
+    return this.ordersService.findAll(userBranchId ?? branchId, status);
   }
 
   @Get('summary')
@@ -36,33 +37,52 @@ export class OrdersController {
   getDailySummary(
     @Query('branchId') branchId: string,
     @Query('date') date?: string,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.ordersService.getDailySummary(branchId, date);
+    return this.ordersService.getDailySummary(userBranchId ?? branchId, date);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) { return this.ordersService.findOne(id); }
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.ordersService.findOne(id, userBranchId);
+  }
 
   @Post()
   async create(
     @Body() dto: CreateOrderDto,
     @CurrentUser('id') userId: string,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    const order = await this.ordersService.create(dto, userId);
-    this.ordersGateway.emitOrderCreated(dto.branchId, order);
+    const order = await this.ordersService.create(
+      { ...dto, branchId: userBranchId ?? dto.branchId },
+      userId,
+    );
+    this.ordersGateway.emitOrderCreated(order.branchId, order);
     return order;
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateOrderDto) {
-    const order = await this.ordersService.updateStatus(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderDto,
+    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
+  ) {
+    const order = await this.ordersService.updateStatus(id, dto, userBranchId, userId);
     this.ordersGateway.emitOrderUpdated(order.branchId, order);
     return order;
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async cancel(@Param('id') id: string) {
-    await this.ordersService.cancel(id);
+  async cancel(
+    @Param('id') id: string,
+    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
+  ) {
+    await this.ordersService.cancel(id, userBranchId, userId);
   }
 }

@@ -2,6 +2,7 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Reports')
 @ApiBearerAuth('JWT')
@@ -18,14 +19,18 @@ export class ReportsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.reportsService.getSummary(branchId, from, to);
+    return this.reportsService.getSummary(userBranchId ?? branchId, from, to);
   }
 
   @Get('kpis')
   @ApiQuery({ name: 'branchId', required: true })
-  getKpis(@Query('branchId') branchId: string) {
-    return this.reportsService.getKpis(branchId);
+  getKpis(
+    @Query('branchId') branchId: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.reportsService.getKpis(userBranchId ?? branchId);
   }
 
   @Get('sales')
@@ -36,7 +41,8 @@ export class ReportsController {
     @Query('branchId') branchId: string,
     @Query('from') from: string,
     @Query('to') to: string,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.reportsService.getSalesSummary(branchId, from, to);
+    return this.reportsService.getSalesSummary(userBranchId ?? branchId, from, to);
   }
 }

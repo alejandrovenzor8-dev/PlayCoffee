@@ -126,10 +126,13 @@ export const paymentsApi = {
 };
 
 export const childAccessApi = {
-  getActive: () => api.get("/child-access/active").then((r) => r.data.data),
-  getOverstaying: () => api.get("/child-access/overstaying").then((r) => r.data.data),
+  getActive: (branchId?: string) =>
+    api.get("/child-access/active", { params: { branchId } }).then((r) => r.data.data),
+  getOverstaying: (branchId?: string) =>
+    api.get("/child-access/overstaying", { params: { branchId } }).then((r) => r.data.data),
   register: (data: unknown) => api.post("/child-access", data).then((r) => r.data.data),
-  checkout: (id: string) => api.patch(`/child-access/${id}/checkout`).then((r) => r.data.data),
+  checkout: (id: string, branchId?: string) =>
+    api.patch(`/child-access/${id}/checkout`, undefined, { params: { branchId } }).then((r) => r.data.data),
 };
 
 export const reservationsApi = {
@@ -150,11 +153,11 @@ export const reportsApi = {
 };
 
 export const inventoryApi = {
-  getAll: (search?: string) =>
-    api.get("/inventory", { params: { search } }).then((r) => r.data.data),
-  getItems: () =>
-    api.get("/inventory").then((r) => r.data.data),
-  getMovements: (params?: { itemId?: string }) =>
+  getAll: (search?: string, branchId?: string) =>
+    api.get("/inventory", { params: { search, branchId } }).then((r) => r.data.data),
+  getItems: (branchId?: string) =>
+    api.get("/inventory", { params: { branchId } }).then((r) => r.data.data),
+  getMovements: (params?: { itemId?: string; branchId?: string }) =>
     api.get("/inventory/movements", { params }).then((r) => r.data.data),
   create: (data: unknown) => api.post("/inventory", data).then((r) => r.data.data),
   addMovement: (data: unknown) =>

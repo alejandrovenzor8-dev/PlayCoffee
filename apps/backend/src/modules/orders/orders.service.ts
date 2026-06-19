@@ -3,11 +3,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus, TableStatus } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class OrdersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
   async findAll(branchId?: string, status?: OrderStatus) {
     return this.prisma.order.findMany({
@@ -31,9 +34,13 @@ export class OrdersService {
     });
   }
 
-  async findOne(id: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id, deletedAt: null },
+  async findOne(id: string, branchId?: string) {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(branchId ? { branchId } : {}),
+      },
       include: {
         table: true,
         user: { select: { id: true, firstName: true, lastName: true } },
@@ -147,11 +154,24 @@ export class OrdersService {
       });
     }
 
+    await this.audit.record({
+      branchId: order.branchId,
+      userId,
+      action: 'ORDER_CREATED',
+      entity: 'Order',
+      entityId: order.id,
+      metadata: {
+        orderNumber: order.orderNumber,
+        tableId: order.tableId,
+        total: Number(order.total),
+      },
+    });
+
     return order;
   }
 
-  async updateStatus(id: string, dto: UpdateOrderDto) {
-    const order = await this.findOne(id);
+  async updateStatus(id: string, dto: UpdateOrderDto, branchId?: string, userId?: string) {
+    const order = await this.findOne(id, branchId);
 
     const updatedOrder = await this.prisma.order.update({
       where: { id },
@@ -175,11 +195,24 @@ export class OrdersService {
       });
     }
 
+    await this.audit.record({
+      branchId: updatedOrder.branchId,
+      userId,
+      action: 'ORDER_STATUS_CHANGED',
+      entity: 'Order',
+      entityId: updatedOrder.id,
+      metadata: {
+        previousStatus: order.status,
+        status: updatedOrder.status,
+        orderNumber: updatedOrder.orderNumber,
+      },
+    });
+
     return updatedOrder;
   }
 
-  async cancel(id: string) {
-    return this.updateStatus(id, { status: OrderStatus.CANCELLED });
+  async cancel(id: string, branchId?: string, userId?: string) {
+    return this.updateStatus(id, { status: OrderStatus.CANCELLED }, branchId, userId);
   }
 
   async getDailySummary(branchId: string, date?: string) {

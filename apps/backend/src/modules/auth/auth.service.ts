@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
@@ -17,6 +18,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
+    private config: ConfigService,
   ) {}
 
   async validateUser(email: string, password: string) {
@@ -76,7 +78,7 @@ export class AuthService {
     let payload: { sub: string; email: string; role: string };
     try {
       payload = this.jwt.verify(token, {
-        secret: process.env.JWT_REFRESH_SECRET ?? 'fallback_refresh',
+        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
       });
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
@@ -119,12 +121,12 @@ export class AuthService {
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(payload, {
-        secret: process.env.JWT_SECRET ?? 'fallback_secret',
-        expiresIn: (process.env.JWT_EXPIRES_IN ?? '15m') as unknown as number,
+        secret: this.config.getOrThrow<string>('JWT_SECRET'),
+        expiresIn: this.config.getOrThrow<string>('JWT_EXPIRES_IN') as unknown as number,
       }),
       this.jwt.signAsync(payload, {
-        secret: process.env.JWT_REFRESH_SECRET ?? 'fallback_refresh',
-        expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN ?? '7d') as unknown as number,
+        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+        expiresIn: this.config.getOrThrow<string>('JWT_REFRESH_EXPIRES_IN') as unknown as number,
       }),
     ]);
 

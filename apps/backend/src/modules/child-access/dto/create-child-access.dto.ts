@@ -4,6 +4,7 @@ import { ChildAccessType } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreateChildAccessDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() branchId?: string;
   @ApiProperty() @IsString() childName: string;
   @ApiPropertyOptional() @IsNumber() @Min(0) @Max(17) @IsOptional() @Type(() => Number) childAge?: number;
   @ApiProperty() @IsString() guardianName: string;

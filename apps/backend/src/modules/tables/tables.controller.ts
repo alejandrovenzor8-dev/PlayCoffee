@@ -7,6 +7,7 @@ import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TableStatus } from '@prisma/client';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Tables')
 @ApiBearerAuth('JWT')
@@ -41,8 +42,12 @@ export class TablesController {
   }
 
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body('status') status: TableStatus) {
-    return this.tablesService.updateStatus(id, status);
+  updateStatus(
+    @Param('id') id: string,
+    @Body('status') status: TableStatus,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.tablesService.updateStatus(id, status, userId);
   }
 
   @Delete(':id')

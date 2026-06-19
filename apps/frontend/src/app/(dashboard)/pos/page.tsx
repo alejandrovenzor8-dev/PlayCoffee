@@ -34,12 +34,15 @@ export default function PosPage() {
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD">("CASH");
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const cart = useCartStore();
   const { user } = useAuthStore();
   const branchId = getActiveBranchId(user);
 
   useEffect(() => {
+    setIsLoading(true);
+    setLoadError(null);
     Promise.all([
       productsApi.getAll(),
       productsApi.getCategories(),
@@ -51,22 +54,9 @@ export default function PosPage() {
         setTables(restaurantTables);
       })
       .catch(() => {
-        // Mock data for demo
-        setCategories([
-          { id: "1", name: "Bebidas", description: "", color: "#2563eb", sortOrder: 0, isActive: true },
-          { id: "2", name: "Alimentos", description: "", color: "#059669", sortOrder: 1, isActive: true },
-          { id: "3", name: "Postres", description: "", color: "#d97706", sortOrder: 2, isActive: true },
-        ]);
-        setProducts([
-          { id: "p1", categoryId: "1", name: "Cappuccino", price: 65, taxRate: 0, isActive: true, isFeatured: true },
-          { id: "p2", categoryId: "1", name: "Latte", price: 70, taxRate: 0, isActive: true, isFeatured: false },
-          { id: "p3", categoryId: "1", name: "Americano", price: 45, taxRate: 0, isActive: true, isFeatured: false },
-          { id: "p4", categoryId: "1", name: "Matcha Latte", price: 85, taxRate: 0, isActive: true, isFeatured: true },
-          { id: "p5", categoryId: "2", name: "Avocado Toast", price: 110, taxRate: 0, isActive: true, isFeatured: false },
-          { id: "p6", categoryId: "2", name: "Waffle", price: 95, taxRate: 0, isActive: true, isFeatured: false },
-          { id: "p7", categoryId: "3", name: "Cheesecake", price: 75, taxRate: 0, isActive: true, isFeatured: false },
-          { id: "p8", categoryId: "3", name: "Brownie", price: 60, taxRate: 0, isActive: true, isFeatured: false },
-        ] as Product[]);
+        setLoadError("No se pudieron cargar productos, categorias o mesas. Verifica que la API este disponible.");
+        setCategories([]);
+        setProducts([]);
         setTables([]);
       })
       .finally(() => setIsLoading(false));
@@ -142,6 +132,12 @@ export default function PosPage() {
           </div>
         )}
 
+        {loadError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {loadError}
+          </div>
+        )}
+
         {/* Search */}
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -178,6 +174,14 @@ export default function PosPage() {
         {isLoading ? (
           <div className="flex flex-1 items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            No hay productos disponibles porque la carga inicial fallo.
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            No hay productos para los filtros seleccionados.
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto">

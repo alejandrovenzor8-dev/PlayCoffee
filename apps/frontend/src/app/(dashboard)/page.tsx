@@ -9,10 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/page-header";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Legend,
+  BarChart, Bar,
 } from "recharts";
 import {
-  TrendingUp, ShoppingCart, Table2, Baby, DollarSign, ArrowUpRight,
+  TrendingUp, ShoppingCart, Table2, Baby, DollarSign, Loader2,
 } from "lucide-react";
 
 interface Kpis {
@@ -22,30 +22,22 @@ interface Kpis {
   activeChildren: number;
 }
 
-const mockSalesData = [
-  { date: "Lun", revenue: 4200 },
-  { date: "Mar", revenue: 3800 },
-  { date: "Mié", revenue: 5100 },
-  { date: "Jue", revenue: 4700 },
-  { date: "Vie", revenue: 7200 },
-  { date: "Sáb", revenue: 9800 },
-  { date: "Dom", revenue: 8400 },
-];
+interface SalesByDay {
+  date: string;
+  revenue: number;
+  orders: number;
+}
 
-const mockProducts = [
-  { name: "Cappuccino", quantity: 142, revenue: 4544 },
-  { name: "Latte", quantity: 118, revenue: 4130 },
-  { name: "Americano", quantity: 96, revenue: 2400 },
-  { name: "Waffle", quantity: 74, revenue: 3700 },
-  { name: "Smoothie", quantity: 62, revenue: 3100 },
-];
+interface SalesByCategory {
+  category: string;
+  amount: number;
+}
 
 function KpiCard({
-  title, value, subtitle, icon: Icon, color,
+  title, value, icon: Icon, color,
 }: {
   title: string;
   value: string;
-  subtitle?: string;
   icon: React.ElementType;
   color: string;
 }) {
@@ -56,12 +48,6 @@ function KpiCard({
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">{title}</p>
             <p className="text-3xl font-bold">{value}</p>
-            {subtitle && (
-              <p className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                <ArrowUpRight className="h-3 w-3" />
-                {subtitle}
-              </p>
-            )}
           </div>
           <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${color}`}>
             <Icon className="h-6 w-6 text-white" />
@@ -72,138 +58,182 @@ function KpiCard({
   );
 }
 
+function EmptyChart({ message }: { message: string }) {
+  return (
+    <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const [kpis, setKpis] = useState<Kpis | null>(null);
+  const [salesByDay, setSalesByDay] = useState<SalesByDay[]>([]);
+  const [byCategory, setByCategory] = useState<SalesByCategory[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    reportsApi.getKpis(getActiveBranchId(user)).catch(() => {
-      // Use mock data when API is unavailable
-      setKpis({
-        today: { revenue: 8750, orders: 43 },
-        month: { revenue: 187450, orders: 892 },
-        activeTables: 7,
-        activeChildren: 12,
-      });
-    });
-    // Set mock data immediately for demo
-    setKpis({
-      today: { revenue: 8750, orders: 43 },
-      month: { revenue: 187450, orders: 892 },
-      activeTables: 7,
-      activeChildren: 12,
-    });
+    const branchId = getActiveBranchId(user);
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - 6);
+
+    setIsLoading(true);
+    setLoadError(null);
+
+    Promise.all([
+      reportsApi.getKpis(branchId),
+      reportsApi.getSummary({
+        branchId,
+        from: from.toISOString().slice(0, 10),
+        to: to.toISOString().slice(0, 10),
+      }),
+    ])
+      .then(([nextKpis, summary]) => {
+        setKpis(nextKpis);
+        setSalesByDay(summary.salesByDay ?? []);
+        setByCategory(summary.byCategory ?? []);
+      })
+      .catch(() => {
+        setKpis(null);
+        setSalesByDay([]);
+        setByCategory([]);
+        setLoadError("No se pudieron cargar los reportes. Verifica que la API este disponible.");
+      })
+      .finally(() => setIsLoading(false));
   }, [user]);
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Dashboard Ejecutivo" description="Resumen operativo" />
+        <Card>
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            {loadError}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Dashboard Ejecutivo"
-        description={`Resumen operativo — ${new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`}
+        description={`Resumen operativo - ${new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`}
       />
 
-      {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           title="Ventas Hoy"
           value={formatCurrency(kpis?.today.revenue ?? 0)}
-          subtitle="+12.5% vs ayer"
           icon={DollarSign}
           color="bg-blue-600"
         />
         <KpiCard
-          title="Órdenes Hoy"
+          title="Ordenes Hoy"
           value={String(kpis?.today.orders ?? 0)}
-          subtitle="+8 vs ayer"
           icon={ShoppingCart}
           color="bg-violet-600"
         />
         <KpiCard
-          title="Mesas Activas"
+          title="Mesas Ocupadas"
           value={String(kpis?.activeTables ?? 0)}
-          subtitle="de 24 disponibles"
           icon={Table2}
           color="bg-emerald-600"
         />
         <KpiCard
-          title="Niños en Área"
+          title="Ninos en Area"
           value={String(kpis?.activeChildren ?? 0)}
-          subtitle="2 por vencer tiempo"
           icon={Baby}
           color="bg-amber-500"
         />
       </div>
 
-      {/* Charts */}
       <div className="grid gap-6 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <TrendingUp className="h-4 w-4 text-blue-600" />
-              Ventas Semanales
+              Ventas Recientes
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={mockSalesData}>
-                <defs>
-                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v) => [formatCurrency(Number(v ?? 0)), "Ventas"]} />
-                <Area
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  fill="url(#colorRevenue)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            {salesByDay.length === 0 ? (
+              <EmptyChart message="Sin ventas completadas en el periodo." />
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <AreaChart data={salesByDay}>
+                  <defs>
+                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v) => [formatCurrency(Number(v ?? 0)), "Ventas"]} />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    fill="url(#colorRevenue)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold">Top Productos</CardTitle>
+            <CardTitle className="text-base font-semibold">Ventas por Categoria</CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={mockProducts} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={72} />
-                <Tooltip formatter={(v) => [formatCurrency(Number(v ?? 0)), "Ingresos"]} />
-                <Bar dataKey="revenue" fill="#2563eb" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {byCategory.length === 0 ? (
+              <EmptyChart message="Sin categorias vendidas en el periodo." />
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={byCategory} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                  <YAxis type="category" dataKey="category" tick={{ fontSize: 11 }} width={92} />
+                  <Tooltip formatter={(v) => [formatCurrency(Number(v ?? 0)), "Ingresos"]} />
+                  <Bar dataKey="amount" fill="#2563eb" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Month summary */}
       <Card>
         <CardContent className="p-6">
           <div className="flex flex-wrap gap-8">
             <div>
               <p className="text-sm text-muted-foreground">Ventas del Mes</p>
-              <p className="text-2xl font-bold mt-1">{formatCurrency(kpis?.month.revenue ?? 0)}</p>
+              <p className="mt-1 text-2xl font-bold">{formatCurrency(kpis?.month.revenue ?? 0)}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Órdenes del Mes</p>
-              <p className="text-2xl font-bold mt-1">{kpis?.month.orders ?? 0}</p>
+              <p className="text-sm text-muted-foreground">Ordenes del Mes</p>
+              <p className="mt-1 text-2xl font-bold">{kpis?.month.orders ?? 0}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Ticket Promedio</p>
-              <p className="text-2xl font-bold mt-1">
-                {kpis
-                  ? formatCurrency(kpis.month.revenue / (kpis.month.orders || 1))
-                  : "$0"}
+              <p className="mt-1 text-2xl font-bold">
+                {formatCurrency((kpis?.month.revenue ?? 0) / (kpis?.month.orders || 1))}
               </p>
             </div>
           </div>

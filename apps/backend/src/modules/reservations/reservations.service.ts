@@ -30,13 +30,19 @@ export class ReservationsService {
     });
   }
 
-  async updateStatus(id: string, status: ReservationStatus) {
-    const reservation = await this.prisma.reservation.findUnique({ where: { id, deletedAt: null } });
+  async updateStatus(id: string, status: ReservationStatus, branchId?: string) {
+    const reservation = await this.prisma.reservation.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(branchId ? { branchId } : {}),
+      },
+    });
     if (!reservation) throw new NotFoundException('Reservation not found');
     return this.prisma.reservation.update({ where: { id }, data: { status } });
   }
 
-  async cancel(id: string) {
-    return this.updateStatus(id, ReservationStatus.CANCELLED);
+  async cancel(id: string, branchId?: string) {
+    return this.updateStatus(id, ReservationStatus.CANCELLED, branchId);
   }
 }

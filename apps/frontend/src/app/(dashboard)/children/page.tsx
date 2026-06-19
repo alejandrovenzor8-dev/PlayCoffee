@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { childAccessApi } from "@/lib/api";
+import { getActiveBranchId } from "@/lib/branch";
+import { useAuthStore } from "@/store/auth.store";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
-import { Baby, UserPlus, LogOut, Clock, AlertTriangle, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { AlertTriangle, Baby, Clock, Loader2, LogOut, UserPlus } from "lucide-react";
 
 interface ChildRecord {
   id: string;
@@ -31,8 +33,7 @@ function ElapsedTimer({ entryTime, maxDuration }: { entryTime: string; maxDurati
 
   useEffect(() => {
     const update = () => {
-      const diff = Math.floor((Date.now() - new Date(entryTime).getTime()) / 1000);
-      setElapsed(diff);
+      setElapsed(Math.floor((Date.now() - new Date(entryTime).getTime()) / 1000));
     };
     update();
     const id = setInterval(update, 1000);
@@ -41,7 +42,7 @@ function ElapsedTimer({ entryTime, maxDuration }: { entryTime: string; maxDurati
 
   const mins = Math.floor(elapsed / 60);
   const secs = elapsed % 60;
-  const pct = maxDuration ? Math.min((elapsed / 60 / maxDuration) * 100, 100) : 0;
+  const pct = maxDuration ? Math.min((mins / maxDuration) * 100, 100) : 0;
   const isOvertime = maxDuration ? mins >= maxDuration : false;
   const isWarning = maxDuration ? mins >= maxDuration * 0.85 : false;
 
@@ -49,31 +50,32 @@ function ElapsedTimer({ entryTime, maxDuration }: { entryTime: string; maxDurati
     <div>
       <div className="flex items-center gap-2">
         <Clock className={cn("h-4 w-4", isOvertime ? "text-red-500" : isWarning ? "text-amber-500" : "text-muted-foreground")} />
-        <span className={cn("font-mono font-bold text-lg tabular-nums", isOvertime ? "text-red-600" : isWarning ? "text-amber-600" : "")}>
+        <span className={cn("font-mono text-lg font-bold tabular-nums", isOvertime ? "text-red-600" : isWarning ? "text-amber-600" : "")}>
           {String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}
         </span>
-        {isOvertime && <AlertTriangle className="h-4 w-4 text-red-500 animate-pulse" />}
+        {isOvertime && <AlertTriangle className="h-4 w-4 animate-pulse text-red-500" />}
       </div>
       {maxDuration && (
-        <div className="mt-1 h-1.5 w-full rounded-full bg-muted overflow-hidden">
-          <div
-            className={cn("h-full rounded-full transition-all", isOvertime ? "bg-red-500" : isWarning ? "bg-amber-500" : "bg-blue-500")}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      )}
-      {maxDuration && (
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Límite: {maxDuration} min
-        </p>
+        <>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn("h-full rounded-full transition-all", isOvertime ? "bg-red-500" : isWarning ? "bg-amber-500" : "bg-blue-500")}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">Limite: {maxDuration} min</p>
+        </>
       )}
     </div>
   );
 }
 
 export default function ChildrenPage() {
+  const { user } = useAuthStore();
+  const branchId = getActiveBranchId(user);
   const [active, setActive] = useState<ChildRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState({
@@ -85,45 +87,27 @@ export default function ChildrenPage() {
     braceletId: "",
   });
 
+  const resetForm = () => {
+    setForm({
+      childName: "",
+      childAge: "",
+      guardianName: "",
+      guardianPhone: "",
+      maxDuration: "120",
+      braceletId: "",
+    });
+  };
+
   const loadActive = useCallback(() => {
-    childAccessApi.getActive()
+    setLoadError(null);
+    childAccessApi.getActive(branchId)
       .then(setActive)
       .catch(() => {
-        // Mock data
-        setActive([
-          {
-            id: "ca1",
-            childName: "Mateo García",
-            childAge: 6,
-            guardianName: "Laura García",
-            guardianPhone: "555-0101",
-            entryTime: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            maxDuration: 120,
-            braceletId: "B-001",
-          },
-          {
-            id: "ca2",
-            childName: "Sofía López",
-            childAge: 8,
-            guardianName: "Carlos López",
-            guardianPhone: "555-0102",
-            entryTime: new Date(Date.now() - 115 * 60 * 1000).toISOString(),
-            maxDuration: 120,
-            braceletId: "B-002",
-          },
-          {
-            id: "ca3",
-            childName: "Diego Martínez",
-            childAge: 5,
-            guardianName: "Ana Martínez",
-            guardianPhone: "555-0103",
-            entryTime: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-            maxDuration: 90,
-          },
-        ]);
+        setActive([]);
+        setLoadError("No se pudo cargar el control infantil. Verifica que la API este disponible.");
       })
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [branchId]);
 
   useEffect(() => {
     loadActive();
@@ -133,8 +117,10 @@ export default function ChildrenPage() {
 
   const handleRegister = async () => {
     setIsSubmitting(true);
+    setLoadError(null);
     try {
       await childAccessApi.register({
+        branchId,
         childName: form.childName,
         childAge: form.childAge ? Number(form.childAge) : undefined,
         guardianName: form.guardianName,
@@ -143,76 +129,73 @@ export default function ChildrenPage() {
         braceletId: form.braceletId || undefined,
       });
       setRegisterOpen(false);
-      setForm({ childName: "", childAge: "", guardianName: "", guardianPhone: "", maxDuration: "120", braceletId: "" });
+      resetForm();
       loadActive();
     } catch {
-      // Optimistically add to list for demo
-      setActive((prev) => [...prev, {
-        id: `ca-${Date.now()}`,
-        childName: form.childName,
-        childAge: form.childAge ? Number(form.childAge) : undefined,
-        guardianName: form.guardianName,
-        guardianPhone: form.guardianPhone,
-        entryTime: new Date().toISOString(),
-        maxDuration: form.maxDuration ? Number(form.maxDuration) : undefined,
-        braceletId: form.braceletId || undefined,
-      }]);
-      setRegisterOpen(false);
-      setForm({ childName: "", childAge: "", guardianName: "", guardianPhone: "", maxDuration: "120", braceletId: "" });
+      setLoadError("No se pudo registrar la entrada. Intenta de nuevo.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleCheckout = async (id: string) => {
+    setLoadError(null);
     try {
-      await childAccessApi.checkout(id);
-    } catch { /* ignore */ }
-    setActive((prev) => prev.filter((r) => r.id !== id));
+      await childAccessApi.checkout(id, branchId);
+      setActive((prev) => prev.filter((record) => record.id !== id));
+    } catch {
+      setLoadError("No se pudo registrar la salida. Intenta de nuevo.");
+    }
   };
+
+  const overtimeCount = active.filter((record) =>
+    record.maxDuration && (Date.now() - new Date(record.entryTime).getTime()) / 60000 >= record.maxDuration
+  ).length;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Control Infantil"
-        description="Gestión del área de juegos y tiempo de permanencia"
+        description="Gestion del area de juegos y tiempo de permanencia"
         actions={
           <Button onClick={() => setRegisterOpen(true)}>
-            <UserPlus className="h-4 w-4 mr-2" />
-            Registrar Niño
+            <UserPlus className="mr-2 h-4 w-4" />
+            Registrar Nino
           </Button>
         }
       />
 
-      {/* Stats */}
+      {loadError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {loadError}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3">
-        <Card className="flex-1 min-w-36">
-          <CardContent className="p-4 flex items-center gap-3">
+        <Card className="min-w-36 flex-1">
+          <CardContent className="flex items-center gap-3 p-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
               <Baby className="h-5 w-5 text-blue-600" />
             </div>
             <div>
               <p className="text-2xl font-bold">{active.length}</p>
-              <p className="text-xs text-muted-foreground">Niños activos</p>
+              <p className="text-xs text-muted-foreground">Ninos activos</p>
             </div>
           </CardContent>
         </Card>
-        <Card className="flex-1 min-w-36">
-          <CardContent className="p-4 flex items-center gap-3">
+        <Card className="min-w-36 flex-1">
+          <CardContent className="flex items-center gap-3 p-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50">
               <AlertTriangle className="h-5 w-5 text-red-500" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-red-600">
-                {active.filter((r) => r.maxDuration && (Date.now() - new Date(r.entryTime).getTime()) / 60000 >= r.maxDuration).length}
-              </p>
+              <p className="text-2xl font-bold text-red-600">{overtimeCount}</p>
               <p className="text-xs text-muted-foreground">Tiempo vencido</p>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Active children grid */}
       {isLoading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -220,9 +203,9 @@ export default function ChildrenPage() {
       ) : active.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center py-12 text-center text-muted-foreground">
-            <Baby className="h-12 w-12 opacity-30 mb-3" />
-            <p className="font-medium">No hay niños registrados</p>
-            <p className="text-sm opacity-70 mt-1">Registra el ingreso de un niño para comenzar</p>
+            <Baby className="mb-3 h-12 w-12 opacity-30" />
+            <p className="font-medium">No hay ninos registrados</p>
+            <p className="mt-1 text-sm opacity-70">Registra el ingreso de un nino para comenzar</p>
           </CardContent>
         </Card>
       ) : (
@@ -230,50 +213,30 @@ export default function ChildrenPage() {
           {active.map((child) => {
             const elapsed = Math.floor((Date.now() - new Date(child.entryTime).getTime()) / 60000);
             const isOvertime = child.maxDuration ? elapsed >= child.maxDuration : false;
-
             return (
               <Card key={child.id} className={cn("overflow-hidden", isOvertime && "border-red-400 ring-1 ring-red-400/50")}>
                 {isOvertime && (
-                  <div className="bg-red-500 px-4 py-1 text-xs font-semibold text-white flex items-center gap-1">
+                  <div className="flex items-center gap-1 bg-red-500 px-4 py-1 text-xs font-semibold text-white">
                     <AlertTriangle className="h-3 w-3" />
-                    ¡Tiempo vencido! Favor de llamar al tutor
+                    Tiempo vencido. Favor de llamar al tutor.
                   </div>
                 )}
-                <CardContent className="p-4 space-y-3">
+                <CardContent className="space-y-3 p-4">
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">👦</span>
-                        <div>
-                          <p className="font-semibold">{child.childName}</p>
-                          {child.childAge && (
-                            <p className="text-xs text-muted-foreground">{child.childAge} años</p>
-                          )}
-                        </div>
-                      </div>
+                      <p className="font-semibold">{child.childName}</p>
+                      {child.childAge && <p className="text-xs text-muted-foreground">{child.childAge} anos</p>}
                     </div>
-                    {child.braceletId && (
-                      <Badge variant="outline" className="text-xs font-mono">
-                        {child.braceletId}
-                      </Badge>
-                    )}
+                    {child.braceletId && <Badge variant="outline" className="text-xs font-mono">{child.braceletId}</Badge>}
                   </div>
-
                   <ElapsedTimer entryTime={child.entryTime} maxDuration={child.maxDuration} />
-
-                  <div className="rounded-lg bg-muted p-3 space-y-1">
+                  <div className="space-y-1 rounded-lg bg-muted p-3">
                     <p className="text-xs font-medium">Tutor responsable</p>
                     <p className="text-sm">{child.guardianName}</p>
                     <p className="text-xs text-muted-foreground">{child.guardianPhone}</p>
                   </div>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => handleCheckout(child.id)}
-                  >
-                    <LogOut className="h-3.5 w-3.5 mr-1" />
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => handleCheckout(child.id)}>
+                    <LogOut className="mr-1 h-3.5 w-3.5" />
                     Registrar Salida
                   </Button>
                 </CardContent>
@@ -283,78 +246,43 @@ export default function ChildrenPage() {
         </div>
       )}
 
-      {/* Register dialog */}
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Registrar Ingreso</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Registrar Ingreso</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Nombre del niño *</Label>
-                <Input
-                  placeholder="Nombre completo"
-                  value={form.childName}
-                  onChange={(e) => setForm((f) => ({ ...f, childName: e.target.value }))}
-                />
+                <Label>Nombre del nino *</Label>
+                <Input value={form.childName} onChange={(event) => setForm((prev) => ({ ...prev, childName: event.target.value }))} />
               </div>
               <div className="space-y-1.5">
-                <Label>Edad (años)</Label>
-                <Input
-                  type="number"
-                  placeholder="Ej: 6"
-                  min={0}
-                  max={17}
-                  value={form.childAge}
-                  onChange={(e) => setForm((f) => ({ ...f, childAge: e.target.value }))}
-                />
+                <Label>Edad</Label>
+                <Input type="number" min={0} max={17} value={form.childAge} onChange={(event) => setForm((prev) => ({ ...prev, childAge: event.target.value }))} />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>Nombre del tutor *</Label>
-              <Input
-                placeholder="Nombre del responsable"
-                value={form.guardianName}
-                onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))}
-              />
+              <Input value={form.guardianName} onChange={(event) => setForm((prev) => ({ ...prev, guardianName: event.target.value }))} />
             </div>
             <div className="space-y-1.5">
-              <Label>Teléfono del tutor *</Label>
-              <Input
-                placeholder="555-0000"
-                value={form.guardianPhone}
-                onChange={(e) => setForm((f) => ({ ...f, guardianPhone: e.target.value }))}
-              />
+              <Label>Telefono del tutor *</Label>
+              <Input value={form.guardianPhone} onChange={(event) => setForm((prev) => ({ ...prev, guardianPhone: event.target.value }))} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Tiempo máximo (min)</Label>
-                <Input
-                  type="number"
-                  placeholder="120"
-                  min={30}
-                  value={form.maxDuration}
-                  onChange={(e) => setForm((f) => ({ ...f, maxDuration: e.target.value }))}
-                />
+                <Label>Tiempo maximo (min)</Label>
+                <Input type="number" min={30} value={form.maxDuration} onChange={(event) => setForm((prev) => ({ ...prev, maxDuration: event.target.value }))} />
               </div>
               <div className="space-y-1.5">
                 <Label>ID Pulsera</Label>
-                <Input
-                  placeholder="B-001"
-                  value={form.braceletId}
-                  onChange={(e) => setForm((f) => ({ ...f, braceletId: e.target.value }))}
-                />
+                <Input value={form.braceletId} onChange={(event) => setForm((prev) => ({ ...prev, braceletId: event.target.value }))} />
               </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRegisterOpen(false)}>Cancelar</Button>
-            <Button
-              onClick={handleRegister}
-              disabled={!form.childName || !form.guardianName || !form.guardianPhone || isSubmitting}
-            >
-              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            <Button onClick={handleRegister} disabled={!form.childName || !form.guardianName || !form.guardianPhone || isSubmitting}>
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Registrar Entrada
             </Button>
           </DialogFooter>

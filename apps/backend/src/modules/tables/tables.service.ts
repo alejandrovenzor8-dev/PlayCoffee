@@ -3,10 +3,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { TableStatus } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class TablesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
   async findAll(branchId?: string, areaId?: string) {
     return this.prisma.restaurantTable.findMany({
@@ -62,9 +66,28 @@ export class TablesService {
     });
   }
 
-  async updateStatus(id: string, status: TableStatus) {
-    await this.findOne(id);
-    return this.prisma.restaurantTable.update({ where: { id }, data: { status } });
+  async updateStatus(id: string, status: TableStatus, userId?: string) {
+    const table = await this.findOne(id);
+    const updatedTable = await this.prisma.restaurantTable.update({
+      where: { id },
+      data: { status },
+      include: { area: true },
+    });
+
+    await this.audit.record({
+      branchId: updatedTable.area.branchId,
+      userId,
+      action: 'TABLE_STATUS_CHANGED',
+      entity: 'RestaurantTable',
+      entityId: updatedTable.id,
+      metadata: {
+        previousStatus: table.status,
+        status: updatedTable.status,
+        tableNumber: updatedTable.number,
+      },
+    });
+
+    return updatedTable;
   }
 
   async remove(id: string) {

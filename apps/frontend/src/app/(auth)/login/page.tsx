@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/store/auth.store";
 import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -96,9 +96,11 @@ function PINPad({ onSubmit, isLoading }: { onSubmit: (pin: string) => void; isLo
   );
 }
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
-  const { setAuth } = useAuthStore();
+  const searchParams = useSearchParams();
+  const { setAuth, isAuthenticated } = useAuthStore();
+  const nextPath = searchParams.get("next") || "/";
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -111,7 +113,7 @@ export default function LoginPage() {
     try {
       const data = await authApi.login(emailForm.email, emailForm.password);
       setAuth(data.user, data.accessToken, data.refreshToken);
-      router.push("/");
+      router.push(nextPath);
     } catch (err: unknown) {
       setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
     } finally {
@@ -126,13 +128,19 @@ export default function LoginPage() {
     try {
       const data = await authApi.loginPin(email, pin);
       setAuth(data.user, data.accessToken, data.refreshToken);
-      router.push("/");
+      router.push(nextPath);
     } catch {
       setError("PIN incorrecto o usuario no encontrado.");
     } finally {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace(nextPath);
+    }
+  }, [isAuthenticated, nextPath, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
@@ -222,5 +230,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
+      <LoginContent />
+    </Suspense>
   );
 }

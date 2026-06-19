@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
 import { CreateInventoryItemDto, InventoryMovementDto } from './dto/create-inventory-item.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Inventory')
 @ApiBearerAuth('JWT')
@@ -13,21 +14,51 @@ export class InventoryController {
 
   @Get()
   @ApiQuery({ name: 'search', required: false })
-  findAll(@Query('search') search?: string) { return this.inventoryService.findAll(search); }
+  @ApiQuery({ name: 'branchId', required: false })
+  findAll(
+    @Query('search') search?: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.inventoryService.findAll(search, userBranchId ?? branchId);
+  }
 
   @Post()
-  create(@Body() dto: CreateInventoryItemDto) { return this.inventoryService.create(dto); }
+  create(
+    @Body() dto: CreateInventoryItemDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    const branchId = userBranchId ?? dto.branchId;
+    if (!branchId) throw new BadRequestException('branchId is required');
+    return this.inventoryService.create({
+      ...dto,
+      branchId,
+    });
+  }
 
   @Post('movements')
-  recordMovement(@Body() dto: InventoryMovementDto) {
-    return this.inventoryService.recordMovement(dto);
+  recordMovement(
+    @Body() dto: InventoryMovementDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.inventoryService.recordMovement(dto, userBranchId ?? dto.branchId);
   }
 
   @Get('movements')
-  getAllMovements(@Query('limit') limit?: string) {
-    return this.inventoryService.getAllMovements(limit ? Number(limit) : 50);
+  @ApiQuery({ name: 'branchId', required: false })
+  getAllMovements(
+    @Query('limit') limit?: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.inventoryService.getAllMovements(limit ? Number(limit) : 50, userBranchId ?? branchId);
   }
 
   @Get(':id/movements')
-  getMovements(@Param('id') id: string) { return this.inventoryService.getMovements(id); }
+  getMovements(
+    @Param('id') id: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.inventoryService.getMovements(id, userBranchId);
+  }
 }

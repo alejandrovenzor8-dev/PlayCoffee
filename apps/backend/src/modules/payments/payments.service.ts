@@ -2,12 +2,16 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentStatus, OrderStatus, TableStatus } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
-  async create(dto: CreatePaymentDto) {
+  async create(dto: CreatePaymentDto, userId?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId, deletedAt: null },
       include: { payments: true },
@@ -51,6 +55,20 @@ export class PaymentsService {
         });
       }
     }
+
+    await this.audit.record({
+      branchId: order.branchId,
+      userId,
+      action: 'PAYMENT_COMPLETED',
+      entity: 'Payment',
+      entityId: payment.id,
+      metadata: {
+        orderId: order.id,
+        method: payment.method,
+        amount: Number(payment.amount),
+        orderCompleted: newTotal >= Number(order.total),
+      },
+    });
 
     return payment;
   }

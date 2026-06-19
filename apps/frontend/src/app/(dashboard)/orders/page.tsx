@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { ordersApi } from "@/lib/api";
+import { getActiveBranchId } from "@/lib/branch";
 import { useOrdersStore } from "@/store/orders.store";
-import { formatCurrency, cn } from "@/lib/utils";
+import { useAuthStore } from "@/store/auth.store";
+import { formatCurrency } from "@/lib/utils";
 import type { Order, OrderStatus } from "@/types/orders.types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -29,60 +31,37 @@ const TABS: { value: string; label: string; statuses: OrderStatus[] }[] = [
   { value: "cancelled", label: "Canceladas", statuses: ["CANCELLED"] },
 ];
 
-const mockOrders: Order[] = [
-  {
-    id: "o1", branchId: "b1", userId: "u1", orderNumber: "PC-A1B2C",
-    status: "PREPARING", subtotal: 270, taxAmount: 0, discountAmount: 0,
-    total: 270, tipAmount: 0, isDelivery: false, isTakeaway: false,
-    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    table: { id: "t1", areaId: "a1", number: "3", capacity: 4, status: "OCCUPIED", isActive: true },
-    user: { id: "u1", firstName: "Carlos", lastName: "R." },
-    items: [
-      { id: "i1", orderId: "o1", productId: "p1", quantity: 2, unitPrice: 65, totalPrice: 130, status: "PREPARING", product: { id: "p1", name: "Cappuccino" }, modifiers: [] },
-      { id: "i2", orderId: "o1", productId: "p5", quantity: 1, unitPrice: 110, totalPrice: 110, status: "PREPARING", product: { id: "p5", name: "Avocado Toast" }, modifiers: [] },
-    ],
-    payments: [],
-  },
-  {
-    id: "o2", branchId: "b1", userId: "u1", orderNumber: "PC-D3E4F",
-    status: "PENDING", subtotal: 180, taxAmount: 0, discountAmount: 0,
-    total: 180, tipAmount: 0, isDelivery: false, isTakeaway: false,
-    createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    table: { id: "t2", areaId: "a1", number: "7", capacity: 2, status: "OCCUPIED", isActive: true },
-    user: { id: "u1", firstName: "Carlos", lastName: "R." },
-    items: [
-      { id: "i3", orderId: "o2", productId: "p2", quantity: 2, unitPrice: 70, totalPrice: 140, status: "PENDING", product: { id: "p2", name: "Latte" }, modifiers: [] },
-    ],
-    payments: [],
-  },
-];
-
 export default function OrdersPage() {
-  const { orders, setOrders, updateOrderStatus, isLoading, setLoading } = useOrdersStore();
+  const { user } = useAuthStore();
+  const branchId = getActiveBranchId(user);
+  const { orders, setOrders, updateOrder, isLoading, setLoading } = useOrdersStore();
   const [activeTab, setActiveTab] = useState("active");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadOrders = () => {
     setLoading(true);
-    ordersApi.getAll()
+    setLoadError(null);
+    ordersApi.getAll({ branchId })
       .then(setOrders)
-      .catch(() => setOrders(mockOrders))
+      .catch(() => {
+        setOrders([]);
+        setLoadError("No se pudieron cargar las ordenes. Verifica que la API este disponible.");
+      })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadOrders(); }, []);
-
-  const displayOrders = orders.length > 0 ? orders : mockOrders;
+  useEffect(() => { loadOrders(); }, [branchId]);
 
   const filteredOrders = (statuses: OrderStatus[]) =>
-    displayOrders.filter((o) => statuses.includes(o.status));
+    orders.filter((o) => statuses.includes(o.status));
 
   const handleStatusChange = async (orderId: string, status: OrderStatus) => {
     try {
-      await ordersApi.updateStatus(orderId, { status });
-    } catch { /* optimistic */ }
-    updateOrderStatus(orderId, status);
+      const updated = await ordersApi.updateStatus(orderId, { status });
+      updateOrder(updated);
+    } catch {
+      setLoadError("No se pudo actualizar la orden. Intenta de nuevo.");
+    }
   };
 
   const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -107,6 +86,12 @@ export default function OrdersPage() {
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
+        {loadError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {loadError}
+          </div>
+        )}
+
         <TabsList>
           {TABS.map(({ value, label, statuses }) => (
             <TabsTrigger key={value} value={value}>

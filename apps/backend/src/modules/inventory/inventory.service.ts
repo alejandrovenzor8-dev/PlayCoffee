@@ -7,37 +7,44 @@ import { MovementType } from '@prisma/client';
 export class InventoryService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(search?: string) {
+  async findAll(search?: string, branchId?: string) {
     return this.prisma.inventoryItem.findMany({
       where: {
         deletedAt: null,
         isActive: true,
+        ...(branchId ? { branchId } : {}),
         ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
       },
+      include: { product: { include: { category: true } } },
       orderBy: { name: 'asc' },
     });
   }
 
-  async findLowStock() {
+  async findLowStock(branchId?: string) {
     return this.prisma.$queryRaw<
       Array<{ id: string; name: string; currentStock: number; minStock: number }>
     >`
       SELECT id, name, "currentStock", "minStock"
-      FROM "InventoryItem"
+      FROM "inventory_items"
       WHERE "deletedAt" IS NULL
         AND "isActive" = true
+        AND (${branchId ?? null}::text IS NULL OR "branchId" = ${branchId ?? null})
         AND "currentStock" <= "minStock"
       ORDER BY name ASC
     `;
   }
 
-  async create(dto: CreateInventoryItemDto) {
+  async create(dto: CreateInventoryItemDto & { branchId: string }) {
     return this.prisma.inventoryItem.create({ data: dto });
   }
 
-  async recordMovement(dto: InventoryMovementDto) {
-    const item = await this.prisma.inventoryItem.findUnique({
-      where: { id: dto.inventoryItemId, deletedAt: null },
+  async recordMovement(dto: InventoryMovementDto, branchId?: string) {
+    const item = await this.prisma.inventoryItem.findFirst({
+      where: {
+        id: dto.inventoryItemId,
+        deletedAt: null,
+        ...(branchId ? { branchId } : {}),
+      },
     });
 
     if (!item) throw new NotFoundException('Inventory item not found');
@@ -81,17 +88,23 @@ export class InventoryService {
     return movement;
   }
 
-  async getAllMovements(limit = 50) {
+  async getAllMovements(limit = 50, branchId?: string) {
     return this.prisma.inventoryMovement.findMany({
+      where: {
+        ...(branchId ? { inventoryItem: { branchId } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: { inventoryItem: { select: { name: true } } },
     });
   }
 
-  async getMovements(inventoryItemId: string) {
+  async getMovements(inventoryItemId: string, branchId?: string) {
     return this.prisma.inventoryMovement.findMany({
-      where: { inventoryItemId },
+      where: {
+        inventoryItemId,
+        ...(branchId ? { inventoryItem: { branchId } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
