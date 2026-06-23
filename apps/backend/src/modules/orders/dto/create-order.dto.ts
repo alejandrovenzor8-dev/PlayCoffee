@@ -1,12 +1,23 @@
 import {
-  IsString, IsArray, IsOptional, IsBoolean, IsNumber, IsEnum, Min, ValidateNested,
+  IsString,
+  IsArray,
+  IsOptional,
+  IsBoolean,
+  IsNumber,
+  Min,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class OrderItemModifierDto {
   @ApiProperty() @IsString() modifierId: string;
-  @ApiPropertyOptional() @IsNumber() @Min(1) @IsOptional() @Type(() => Number) quantity?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  @Type(() => Number)
+  quantity?: number;
 }
 
 export class CreateOrderItemDto {

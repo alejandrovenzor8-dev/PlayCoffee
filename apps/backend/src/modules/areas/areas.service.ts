@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAreaDto, UpdateAreaDto, ReorderAreasDto } from './dto';
 
@@ -10,6 +14,7 @@ export class AreasService {
    * Obtener todas las áreas de una sucursal
    */
   async findAll(branchId: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.tableArea.findMany({
       where: {
         branchId,
@@ -36,6 +41,7 @@ export class AreasService {
    * Obtener áreas activas
    */
   async findActive(branchId: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.tableArea.findMany({
       where: {
         branchId,
@@ -54,9 +60,9 @@ export class AreasService {
   /**
    * Obtener un área por ID
    */
-  async findOne(id: string) {
-    const area = await this.prisma.tableArea.findUnique({
-      where: { id, deletedAt: null },
+  async findOne(id: string, branchId?: string) {
+    const area = await this.prisma.tableArea.findFirst({
+      where: { id, deletedAt: null, ...(branchId ? { branchId } : {}) },
       include: {
         tables: {
           where: { deletedAt: null },
@@ -78,6 +84,7 @@ export class AreasService {
    * Crear nueva área
    */
   async create(branchId: string, dto: CreateAreaDto) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     // Si no se proporciona orden, obtener el siguiente disponible
     if (dto.order === undefined) {
       const lastArea = await this.prisma.tableArea.findFirst({
@@ -103,8 +110,8 @@ export class AreasService {
   /**
    * Actualizar área
    */
-  async update(id: string, dto: UpdateAreaDto) {
-    await this.findOne(id);
+  async update(id: string, dto: UpdateAreaDto, branchId?: string) {
+    await this.findOne(id, branchId);
 
     return this.prisma.tableArea.update({
       where: { id },
@@ -121,6 +128,7 @@ export class AreasService {
    * Reordenar áreas
    */
   async reorder(branchId: string, dto: ReorderAreasDto) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     // Verificar que todas las áreas pertenezcan a la sucursal
     const areas = await this.prisma.tableArea.findMany({
       where: {
@@ -131,7 +139,9 @@ export class AreasService {
     });
 
     if (areas.length !== dto.areaIds.length) {
-      throw new BadRequestException('Algunas áreas no existen o no pertenecen a esta sucursal');
+      throw new BadRequestException(
+        'Algunas áreas no existen o no pertenecen a esta sucursal',
+      );
     }
 
     // Actualizar el orden de cada área
@@ -150,12 +160,14 @@ export class AreasService {
   /**
    * Eliminar área (soft delete)
    */
-  async remove(id: string) {
-    const area = await this.findOne(id);
+  async remove(id: string, branchId?: string) {
+    const area = await this.findOne(id, branchId);
 
     // Verificar que no tenga mesas activas
     if (area._count.tables > 0) {
-      throw new BadRequestException('No se puede eliminar un área que tiene mesas asignadas');
+      throw new BadRequestException(
+        'No se puede eliminar un área que tiene mesas asignadas',
+      );
     }
 
     return this.prisma.tableArea.update({
@@ -167,8 +179,8 @@ export class AreasService {
   /**
    * Alternar estado activo/inactivo
    */
-  async toggleActive(id: string) {
-    const area = await this.findOne(id);
+  async toggleActive(id: string, branchId?: string) {
+    const area = await this.findOne(id, branchId);
 
     return this.prisma.tableArea.update({
       where: { id },

@@ -1,13 +1,29 @@
-import { BadRequestException, Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
-import { CreateInventoryItemDto, InventoryMovementDto } from './dto/create-inventory-item.dto';
+import {
+  CreateInventoryItemDto,
+  InventoryMovementDto,
+} from './dto/create-inventory-item.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRoleEnum } from '@prisma/client';
 
 @ApiTags('Inventory')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRoleEnum.CASHIER)
 @Controller('inventory')
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
@@ -41,7 +57,10 @@ export class InventoryController {
     @Body() dto: InventoryMovementDto,
     @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.inventoryService.recordMovement(dto, userBranchId ?? dto.branchId);
+    return this.inventoryService.recordMovement(
+      dto,
+      userBranchId ?? dto.branchId,
+    );
   }
 
   @Get('movements')
@@ -51,7 +70,10 @@ export class InventoryController {
     @Query('branchId') branchId?: string,
     @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.inventoryService.getAllMovements(limit ? Number(limit) : 50, userBranchId ?? branchId);
+    return this.inventoryService.getAllMovements(
+      limit ? Number(limit) : 50,
+      userBranchId ?? branchId,
+    );
   }
 
   @Get(':id/movements')

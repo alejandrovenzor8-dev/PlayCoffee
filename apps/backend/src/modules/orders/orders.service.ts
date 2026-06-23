@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -13,6 +17,7 @@ export class OrdersService {
   ) {}
 
   async findAll(branchId?: string, status?: OrderStatus) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.order.findMany({
       where: {
         deletedAt: null,
@@ -58,6 +63,21 @@ export class OrdersService {
   }
 
   async create(dto: CreateOrderDto, userId: string) {
+    if (!dto.branchId) throw new BadRequestException('branchId is required');
+    if (dto.tableId) {
+      const table = await this.prisma.restaurantTable.findFirst({
+        where: {
+          id: dto.tableId,
+          deletedAt: null,
+          area: { branchId: dto.branchId },
+        },
+        select: { id: true },
+      });
+      if (!table) {
+        throw new BadRequestException('Table does not belong to this branch');
+      }
+    }
+
     // Fetch product prices
     const productIds = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
@@ -73,17 +93,24 @@ export class OrdersService {
       unitPrice: number;
       totalPrice: number;
       notes?: string;
-      modifiers: { create: Array<{ modifierId: string; quantity: number; price: unknown }> };
+      modifiers: {
+        create: Array<{ modifierId: string; quantity: number; price: unknown }>;
+      };
     }> = [];
 
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
-      if (!product) throw new NotFoundException(`Product ${item.productId} not found`);
+      if (!product)
+        throw new NotFoundException(`Product ${item.productId} not found`);
 
       const unitPrice = Number(product.price);
       let itemModifiersTotal = 0;
 
-      const modifiersCreate: Array<{ modifierId: string; quantity: number; price: unknown }> = [];
+      const modifiersCreate: Array<{
+        modifierId: string;
+        quantity: number;
+        price: unknown;
+      }> = [];
       if (item.modifiers?.length) {
         const modifierIds = item.modifiers.map((m) => m.modifierId);
         const modifiers = await this.prisma.modifier.findMany({
@@ -141,7 +168,12 @@ export class OrdersService {
       },
       include: {
         table: true,
-        items: { include: { product: true, modifiers: { include: { modifier: true } } } },
+        items: {
+          include: {
+            product: true,
+            modifiers: { include: { modifier: true } },
+          },
+        },
         payments: true,
       },
     });
@@ -170,7 +202,12 @@ export class OrdersService {
     return order;
   }
 
-  async updateStatus(id: string, dto: UpdateOrderDto, branchId?: string, userId?: string) {
+  async updateStatus(
+    id: string,
+    dto: UpdateOrderDto,
+    branchId?: string,
+    userId?: string,
+  ) {
     const order = await this.findOne(id, branchId);
 
     const updatedOrder = await this.prisma.order.update({
@@ -178,16 +215,25 @@ export class OrdersService {
       data: {
         status: dto.status,
         notes: dto.notes,
-        ...(dto.status === OrderStatus.COMPLETED ? { completedAt: new Date() } : {}),
-        ...(dto.status === OrderStatus.CANCELLED ? { cancelledAt: new Date() } : {}),
+        ...(dto.status === OrderStatus.COMPLETED
+          ? { completedAt: new Date() }
+          : {}),
+        ...(dto.status === OrderStatus.CANCELLED
+          ? { cancelledAt: new Date() }
+          : {}),
       },
-      include: { table: true, items: { include: { product: true } }, payments: true },
+      include: {
+        table: true,
+        items: { include: { product: true } },
+        payments: true,
+      },
     });
 
     // Free table when order is completed or cancelled
     if (
       order.tableId &&
-      (dto.status === OrderStatus.COMPLETED || dto.status === OrderStatus.CANCELLED)
+      (dto.status === OrderStatus.COMPLETED ||
+        dto.status === OrderStatus.CANCELLED)
     ) {
       await this.prisma.restaurantTable.update({
         where: { id: order.tableId },
@@ -212,10 +258,16 @@ export class OrdersService {
   }
 
   async cancel(id: string, branchId?: string, userId?: string) {
-    return this.updateStatus(id, { status: OrderStatus.CANCELLED }, branchId, userId);
+    return this.updateStatus(
+      id,
+      { status: OrderStatus.CANCELLED },
+      branchId,
+      userId,
+    );
   }
 
   async getDailySummary(branchId: string, date?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     const targetDate = date ? new Date(date) : new Date();
     const start = new Date(targetDate.setHours(0, 0, 0, 0));
     const end = new Date(targetDate.setHours(23, 59, 59, 999));

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -22,7 +18,7 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findFirst({
       where: { email, deletedAt: null },
     });
 
@@ -31,11 +27,19 @@ export class AuthService {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return null;
 
-    const { passwordHash, pin, refreshToken, ...result } = user;
+    const {
+      passwordHash: _passwordHash,
+      pin: _pin,
+      refreshToken: _refreshToken,
+      ...result
+    } = user;
     return result;
   }
 
-  async login(email: string, password: string): Promise<TokenPair & { user: object }> {
+  async login(
+    email: string,
+    password: string,
+  ): Promise<TokenPair & { user: object }> {
     const user = await this.validateUser(email, password);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
@@ -44,14 +48,22 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const tokens = await this.generateTokens(user.id, user.email, String(user.role), user.branchId ?? undefined);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      String(user.role),
+      user.branchId ?? undefined,
+    );
     await this.saveRefreshToken(user.id, tokens.refreshToken);
 
     return { ...tokens, user };
   }
 
-  async loginWithPin(email: string, pin: string): Promise<TokenPair & { user: object }> {
-    const user = await this.prisma.user.findUnique({
+  async loginWithPin(
+    email: string,
+    pin: string,
+  ): Promise<TokenPair & { user: object }> {
+    const user = await this.prisma.user.findFirst({
       where: { email, deletedAt: null },
     });
 
@@ -67,8 +79,18 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const { passwordHash, pin: _pin, refreshToken, ...safeUser } = user;
-    const tokens = await this.generateTokens(user.id, user.email, String(user.role), user.branchId ?? undefined);
+    const {
+      passwordHash: _passwordHash,
+      pin: _pin,
+      refreshToken: _refreshToken,
+      ...safeUser
+    } = user;
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      String(user.role),
+      user.branchId ?? undefined,
+    );
     await this.saveRefreshToken(user.id, tokens.refreshToken);
 
     return { ...tokens, user: safeUser };
@@ -84,7 +106,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    const user = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findFirst({
       where: { id: payload.sub, deletedAt: null },
     });
 
@@ -98,7 +120,12 @@ export class AuthService {
 
     if (!valid) throw new UnauthorizedException('Refresh token revoked');
 
-    const tokens = await this.generateTokens(user.id, user.email, String(user.role), user.branchId ?? undefined);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      String(user.role),
+      user.branchId ?? undefined,
+    );
     await this.saveRefreshToken(user.id, tokens.refreshToken);
 
     return tokens;
@@ -122,11 +149,15 @@ export class AuthService {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(payload, {
         secret: this.config.getOrThrow<string>('JWT_SECRET'),
-        expiresIn: this.config.getOrThrow<string>('JWT_EXPIRES_IN') as unknown as number,
+        expiresIn: this.config.getOrThrow<string>(
+          'JWT_EXPIRES_IN',
+        ) as unknown as number,
       }),
       this.jwt.signAsync(payload, {
         secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.config.getOrThrow<string>('JWT_REFRESH_EXPIRES_IN') as unknown as number,
+        expiresIn: this.config.getOrThrow<string>(
+          'JWT_REFRESH_EXPIRES_IN',
+        ) as unknown as number,
       }),
     ]);
 

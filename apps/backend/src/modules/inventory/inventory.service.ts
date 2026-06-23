@@ -1,6 +1,13 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateInventoryItemDto, InventoryMovementDto } from './dto/create-inventory-item.dto';
+import {
+  CreateInventoryItemDto,
+  InventoryMovementDto,
+} from './dto/create-inventory-item.dto';
 import { MovementType } from '@prisma/client';
 
 @Injectable()
@@ -8,6 +15,7 @@ export class InventoryService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(search?: string, branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.inventoryItem.findMany({
       where: {
         deletedAt: null,
@@ -21,14 +29,20 @@ export class InventoryService {
   }
 
   async findLowStock(branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.$queryRaw<
-      Array<{ id: string; name: string; currentStock: number; minStock: number }>
+      Array<{
+        id: string;
+        name: string;
+        currentStock: number;
+        minStock: number;
+      }>
     >`
       SELECT id, name, "currentStock", "minStock"
       FROM "inventory_items"
       WHERE "deletedAt" IS NULL
         AND "isActive" = true
-        AND (${branchId ?? null}::text IS NULL OR "branchId" = ${branchId ?? null})
+        AND "branchId" = ${branchId}
         AND "currentStock" <= "minStock"
       ORDER BY name ASC
     `;
@@ -39,6 +53,7 @@ export class InventoryService {
   }
 
   async recordMovement(dto: InventoryMovementDto, branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     const item = await this.prisma.inventoryItem.findFirst({
       where: {
         id: dto.inventoryItemId,
@@ -89,6 +104,7 @@ export class InventoryService {
   }
 
   async getAllMovements(limit = 50, branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.inventoryMovement.findMany({
       where: {
         ...(branchId ? { inventoryItem: { branchId } } : {}),
@@ -100,6 +116,7 @@ export class InventoryService {
   }
 
   async getMovements(inventoryItemId: string, branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.inventoryMovement.findMany({
       where: {
         inventoryItemId,

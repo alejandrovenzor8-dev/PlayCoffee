@@ -1,5 +1,15 @@
 import {
-  Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, HttpCode, HttpStatus,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
@@ -8,11 +18,14 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OrdersGateway } from './orders.gateway';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, UserRoleEnum } from '@prisma/client';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @ApiTags('Orders')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
 @Controller('orders')
 export class OrdersController {
   constructor(
@@ -71,7 +84,12 @@ export class OrdersController {
     @CurrentUser('branchId') userBranchId?: string,
     @CurrentUser('id') userId?: string,
   ) {
-    const order = await this.ordersService.updateStatus(id, dto, userBranchId, userId);
+    const order = await this.ordersService.updateStatus(
+      id,
+      dto,
+      userBranchId,
+      userId,
+    );
     this.ordersGateway.emitOrderUpdated(order.branchId, order);
     return order;
   }

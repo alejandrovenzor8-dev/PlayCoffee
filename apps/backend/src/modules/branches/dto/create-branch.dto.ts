@@ -1,4 +1,4 @@
-import { IsString, IsEmail, IsOptional, IsBoolean, IsUrl } from 'class-validator';
+import { IsString, IsEmail, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateBranchDto {

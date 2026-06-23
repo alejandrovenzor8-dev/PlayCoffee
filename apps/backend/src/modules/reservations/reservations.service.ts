@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ReservationStatus } from '@prisma/client';
@@ -8,9 +12,14 @@ export class ReservationsService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(branchId?: string, date?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     const targetDate = date ? new Date(date) : undefined;
-    const start = targetDate ? new Date(targetDate.setHours(0, 0, 0, 0)) : undefined;
-    const end = targetDate ? new Date(targetDate.setHours(23, 59, 59, 999)) : undefined;
+    const start = targetDate
+      ? new Date(targetDate.setHours(0, 0, 0, 0))
+      : undefined;
+    const end = targetDate
+      ? new Date(targetDate.setHours(23, 59, 59, 999))
+      : undefined;
 
     return this.prisma.reservation.findMany({
       where: {
@@ -24,6 +33,21 @@ export class ReservationsService {
   }
 
   async create(dto: CreateReservationDto) {
+    if (!dto.branchId) throw new BadRequestException('branchId is required');
+    if (dto.tableId) {
+      const table = await this.prisma.restaurantTable.findFirst({
+        where: {
+          id: dto.tableId,
+          deletedAt: null,
+          area: { branchId: dto.branchId },
+        },
+        select: { id: true },
+      });
+      if (!table) {
+        throw new BadRequestException('Table does not belong to this branch');
+      }
+    }
+
     return this.prisma.reservation.create({
       data: { ...dto, reservedAt: new Date(dto.reservedAt) },
       include: { table: true, package: true },

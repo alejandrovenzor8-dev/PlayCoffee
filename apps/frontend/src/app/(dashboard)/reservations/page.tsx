@@ -201,7 +201,7 @@ export default function ReservationsPage() {
                         <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{reservation.partySize} personas</span>
                         <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{reservation.contactPhone}</span>
                       </div>
-                      {reservation.notes && <p className="text-xs italic text-muted-foreground">"{reservation.notes}"</p>}
+                      {reservation.notes && <p className="text-xs italic text-muted-foreground">&quot;{reservation.notes}&quot;</p>}
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">

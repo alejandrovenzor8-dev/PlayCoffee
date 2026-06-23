@@ -5,8 +5,21 @@ import { Type } from 'class-transformer';
 
 export class CreatePaymentDto {
   @ApiProperty() @IsString() orderId: string;
-  @ApiProperty({ enum: PaymentMethod }) @IsEnum(PaymentMethod) method: PaymentMethod;
-  @ApiProperty() @IsNumber() @Min(0) @Type(() => Number) amount: number;
-  @ApiPropertyOptional() @IsNumber() @Min(0) @IsOptional() @Type(() => Number) tipAmount?: number;
+  @ApiProperty({ enum: PaymentMethod })
+  @IsEnum(PaymentMethod)
+  method: PaymentMethod;
+  @ApiProperty() @IsNumber() @Min(0.01) @Type(() => Number) amount: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  receivedAmount?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  tipAmount?: number;
   @ApiPropertyOptional() @IsString() @IsOptional() reference?: string;
 }

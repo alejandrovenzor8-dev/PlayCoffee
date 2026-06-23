@@ -1,17 +1,28 @@
 import {
-  Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { TablesService } from './tables.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { TableStatus } from '@prisma/client';
+import { TableStatus, UserRoleEnum } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @ApiTags('Tables')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
 @Controller('tables')
 export class TablesController {
   constructor(private readonly tablesService: TablesService) {}
@@ -22,23 +33,45 @@ export class TablesController {
   findAll(
     @Query('branchId') branchId?: string,
     @Query('areaId') areaId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.tablesService.findAll(branchId, areaId);
+    return this.tablesService.findAll(userBranchId ?? branchId, areaId);
   }
 
   @Get('areas')
   @ApiQuery({ name: 'branchId', required: false })
-  findAreas(@Query('branchId') branchId?: string) { return this.tablesService.findAreas(branchId); }
+  findAreas(
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.tablesService.findAreas(userBranchId ?? branchId);
+  }
 
   @Get(':id')
-  findOne(@Param('id') id: string) { return this.tablesService.findOne(id); }
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.tablesService.findOne(id, userBranchId);
+  }
 
   @Post()
-  create(@Body() dto: CreateTableDto) { return this.tablesService.create(dto); }
+  @Roles(UserRoleEnum.CASHIER)
+  create(
+    @Body() dto: CreateTableDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.tablesService.create(dto, userBranchId);
+  }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateTableDto) {
-    return this.tablesService.update(id, dto);
+  @Roles(UserRoleEnum.CASHIER)
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTableDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.tablesService.update(id, dto, userBranchId);
   }
 
   @Patch(':id/status')
@@ -46,10 +79,17 @@ export class TablesController {
     @Param('id') id: string,
     @Body('status') status: TableStatus,
     @CurrentUser('id') userId: string,
+    @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.tablesService.updateStatus(id, status, userId);
+    return this.tablesService.updateStatus(id, status, userId, userBranchId);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) { return this.tablesService.remove(id); }
+  @Roles(UserRoleEnum.CASHIER)
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.tablesService.remove(id, userBranchId);
+  }
 }

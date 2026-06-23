@@ -3,10 +3,14 @@ import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRoleEnum } from '@prisma/client';
 
 @ApiTags('Reports')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRoleEnum.ADMIN)
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
@@ -43,6 +47,10 @@ export class ReportsController {
     @Query('to') to: string,
     @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.reportsService.getSalesSummary(userBranchId ?? branchId, from, to);
+    return this.reportsService.getSalesSummary(
+      userBranchId ?? branchId,
+      from,
+      to,
+    );
   }
 }

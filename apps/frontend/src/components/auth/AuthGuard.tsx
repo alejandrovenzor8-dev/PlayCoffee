@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/store/auth.store";
@@ -8,12 +8,7 @@ import { useAuthStore } from "@/store/auth.store";
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, accessToken } = useAuthStore();
-  const [hasHydrated, setHasHydrated] = useState(false);
-
-  useEffect(() => {
-    setHasHydrated(true);
-  }, []);
+  const { isAuthenticated, accessToken, hasHydrated } = useAuthStore();
 
   useEffect(() => {
     if (!hasHydrated) return;

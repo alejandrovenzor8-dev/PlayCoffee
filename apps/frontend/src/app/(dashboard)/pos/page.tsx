@@ -8,7 +8,6 @@ import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
 import type { Product, Category } from "@/types/pos.types";
 import type { RestaurantTable } from "@/types/orders.types";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -20,8 +19,37 @@ import {
 } from "@/components/ui/dialog";
 import {
   ShoppingCart, Trash2, Plus, Minus, Search, CreditCard, Banknote, X, Loader2, Table2,
+  ArrowRightLeft,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
+
+type PaymentMethod = "CASH" | "CARD" | "TRANSFER";
+type PaymentSummary = {
+  orderId: string;
+  total: number;
+  totalPaid: number;
+  remainingAmount: number;
+  changeAmount: number;
+  paymentStatus: "UNPAID" | "PARTIALLY_PAID" | "PAID";
+};
+type PosPayment = {
+  id: string;
+  method: PaymentMethod;
+  amount: number;
+  receivedAmount: number | null;
+  changeAmount: number;
+  reference: string | null;
+};
+type PosOrder = {
+  id: string;
+  orderNumber: string;
+};
+
+const paymentLabels: Record<PaymentMethod, string> = {
+  CASH: "Efectivo",
+  CARD: "Tarjeta",
+  TRANSFER: "Transferencia",
+};
 
 export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -31,7 +59,14 @@ export default function PosPage() {
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD">("CASH");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [receivedAmount, setReceivedAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const [currentOrder, setCurrentOrder] = useState<PosOrder | null>(null);
+  const [payments, setPayments] = useState<PosPayment[]>([]);
+  const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -67,6 +102,12 @@ export default function PosPage() {
   );
 
   const selectedTable = tables.find((table) => table.id === cart.tableId);
+  const cartTotal = cart.total();
+  const paidAmount = paymentSummary?.totalPaid ?? 0;
+  const remainingAmount = paymentSummary?.remainingAmount ?? cartTotal;
+  const cashReceived = Number(receivedAmount || 0);
+  const cashChange =
+    paymentMethod === "CASH" ? Math.max(0, cashReceived - remainingAmount) : 0;
 
   const filtered = products.filter((p) => {
     const matchCat = !selectedCategory || p.categoryId === selectedCategory;
@@ -74,33 +115,87 @@ export default function PosPage() {
     return matchCat && matchSearch;
   });
 
-  const handlePlaceOrder = async () => {
+  const ensureOrder = async () => {
     if (cart.items.length === 0) return;
-    setIsProcessing(true);
-    try {
-      const orderData = {
-        branchId,
-        tableId: cart.tableId,
-        notes: cart.notes,
-        items: cart.items.map((i) => ({
-          productId: i.product.id,
-          quantity: i.quantity,
-          notes: i.notes,
-          modifiers: i.selectedModifiers.map((m) => ({
-            modifierId: m.modifier.id,
-            quantity: m.quantity,
-          })),
+    if (currentOrder) return currentOrder;
+
+    const orderData = {
+      branchId,
+      tableId: cart.tableId,
+      notes: cart.notes,
+      items: cart.items.map((i) => ({
+        productId: i.product.id,
+        quantity: i.quantity,
+        notes: i.notes,
+        modifiers: i.selectedModifiers.map((m) => ({
+          modifierId: m.modifier.id,
+          quantity: m.quantity,
         })),
-      };
+      })),
+    };
 
-      const order = await ordersApi.create(orderData);
+    const order = await ordersApi.create(orderData);
+    const nextOrder = { id: order.id, orderNumber: order.orderNumber };
+    setCurrentOrder(nextOrder);
+    setPaymentSummary({
+      orderId: order.id,
+      total: cartTotal,
+      totalPaid: 0,
+      remainingAmount: cartTotal,
+      changeAmount: 0,
+      paymentStatus: "UNPAID",
+    });
+    return nextOrder;
+  };
 
-      // Process payment
-      await paymentsApi.create({
+  const resetPaymentForm = () => {
+    setPaymentAmount("");
+    setReceivedAmount("");
+    setReference("");
+    setPaymentError(null);
+  };
+
+  const handleAddPayment = async () => {
+    if (cart.items.length === 0 || remainingAmount <= 0) return;
+    setIsProcessing(true);
+    setPaymentError(null);
+    try {
+      const order = await ensureOrder();
+      if (!order) return;
+
+      const numericAmount =
+        paymentMethod === "CASH"
+          ? Number(receivedAmount || paymentAmount)
+          : Number(paymentAmount);
+
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        setPaymentError("Ingresa un monto mayor a cero.");
+        return;
+      }
+
+      if (paymentMethod !== "CASH" && numericAmount > remainingAmount) {
+        setPaymentError("El monto no puede exceder el saldo pendiente.");
+        return;
+      }
+
+      const appliedAmount =
+        paymentMethod === "CASH"
+          ? Math.min(numericAmount, remainingAmount)
+          : numericAmount;
+
+      const response = await paymentsApi.create({
         orderId: order.id,
         method: paymentMethod,
-        amount: cart.total(),
+        amount: appliedAmount,
+        receivedAmount: paymentMethod === "CASH" ? numericAmount : undefined,
+        reference: paymentMethod === "CASH" ? undefined : reference || undefined,
       });
+
+      setPayments((current) => [...current, response.payment]);
+      setPaymentSummary(response.summary);
+      resetPaymentForm();
+
+      if (response.summary.paymentStatus !== "PAID") return;
 
       setTables((currentTables) =>
         currentTables.map((table) =>
@@ -109,11 +204,15 @@ export default function PosPage() {
       );
 
       cart.clearCart();
+      setCurrentOrder(null);
+      setPayments([]);
+      setPaymentSummary(null);
       setPaymentOpen(false);
-      setSuccessMsg(`Orden ${order.orderNumber} procesada correctamente`);
+      setSuccessMsg(`Orden ${order.orderNumber} pagada correctamente`);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
       console.error(err);
+      setPaymentError("No se pudo registrar el pago. Revisa el saldo, la caja y la orden.");
     } finally {
       setIsProcessing(false);
     }
@@ -308,7 +407,10 @@ export default function PosPage() {
           <Button
             className="w-full"
             disabled={cart.items.length === 0}
-            onClick={() => setPaymentOpen(true)}
+            onClick={() => {
+              resetPaymentForm();
+              setPaymentOpen(true);
+            }}
           >
             <CreditCard className="h-4 w-4 mr-2" />
             Cobrar {cart.items.length > 0 ? formatCurrency(cart.total()) : ""}
@@ -324,20 +426,36 @@ export default function PosPage() {
       </div>
 
       {/* Payment modal */}
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog
+        open={paymentOpen}
+        onOpenChange={(open) => {
+          if (!open && paymentSummary?.paymentStatus === "PARTIALLY_PAID") return;
+          setPaymentOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Procesar Pago</DialogTitle>
+            <DialogTitle>Pagos del ticket</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="rounded-lg bg-muted p-4 text-center">
               <p className="text-sm text-muted-foreground">Total a cobrar</p>
-              <p className="text-4xl font-bold mt-1 text-blue-600">{formatCurrency(cart.total())}</p>
+              <p className="text-4xl font-bold mt-1 text-blue-600">{formatCurrency(cartTotal)}</p>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-left">
+                <div className="rounded-lg border bg-background p-3">
+                  <p className="text-xs text-muted-foreground">Pagado</p>
+                  <p className="text-lg font-bold text-emerald-600">{formatCurrency(paidAmount)}</p>
+                </div>
+                <div className="rounded-lg border bg-background p-3">
+                  <p className="text-xs text-muted-foreground">Saldo</p>
+                  <p className="text-lg font-bold text-slate-900">{formatCurrency(remainingAmount)}</p>
+                </div>
+              </div>
             </div>
             <div>
               <p className="text-sm font-medium mb-2">Método de pago</p>
-              <div className="grid grid-cols-2 gap-2">
-                {(["CASH", "CARD"] as const).map((method) => (
+              <div className="grid grid-cols-3 gap-2">
+                {(["CASH", "CARD", "TRANSFER"] as const).map((method) => (
                   <button
                     key={method}
                     onClick={() => setPaymentMethod(method)}
@@ -347,22 +465,109 @@ export default function PosPage() {
                         : "hover:bg-muted"
                     }`}
                   >
-                    {method === "CASH" ? <Banknote className="h-4 w-4" /> : <CreditCard className="h-4 w-4" />}
-                    {method === "CASH" ? "Efectivo" : "Tarjeta"}
+                    {method === "CASH" ? (
+                      <Banknote className="h-4 w-4" />
+                    ) : method === "CARD" ? (
+                      <CreditCard className="h-4 w-4" />
+                    ) : (
+                      <ArrowRightLeft className="h-4 w-4" />
+                    )}
+                    {paymentLabels[method]}
                   </button>
                 ))}
               </div>
             </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {paymentMethod === "CASH" ? (
+                <div>
+                  <p className="mb-2 text-sm font-medium">Efectivo recibido</p>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={receivedAmount}
+                    onChange={(event) => setReceivedAmount(event.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <p className="mb-2 text-sm font-medium">Monto a aplicar</p>
+                  <Input
+                    type="number"
+                    min="0"
+                    max={remainingAmount}
+                    step="0.01"
+                    value={paymentAmount}
+                    onChange={(event) => setPaymentAmount(event.target.value)}
+                    placeholder={remainingAmount.toFixed(2)}
+                  />
+                </div>
+              )}
+              <div>
+                <p className="mb-2 text-sm font-medium">
+                  {paymentMethod === "CASH" ? "Cambio" : "Referencia"}
+                </p>
+                {paymentMethod === "CASH" ? (
+                  <div className="flex h-10 items-center rounded-md border bg-muted px-3 text-sm font-semibold">
+                    {formatCurrency(cashChange)}
+                  </div>
+                ) : (
+                  <Input
+                    value={reference}
+                    onChange={(event) => setReference(event.target.value)}
+                    placeholder="Opcional"
+                  />
+                )}
+              </div>
+            </div>
+
+            {paymentError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {paymentError}
+              </div>
+            )}
+
+            {payments.length > 0 && (
+              <div className="rounded-lg border">
+                <div className="border-b px-3 py-2 text-sm font-medium">Pagos aplicados</div>
+                <div className="max-h-40 overflow-y-auto divide-y">
+                  {payments.map((payment) => (
+                    <div key={payment.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                      <div>
+                        <p className="font-medium">{paymentLabels[payment.method]}</p>
+                        {payment.reference && (
+                          <p className="text-xs text-muted-foreground">{payment.reference}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold">{formatCurrency(payment.amount)}</p>
+                        {payment.changeAmount > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Cambio {formatCurrency(payment.changeAmount)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setPaymentOpen(false)}
+              disabled={isProcessing || paymentSummary?.paymentStatus === "PARTIALLY_PAID"}
+            >
               Cancelar
             </Button>
-            <Button onClick={handlePlaceOrder} disabled={isProcessing}>
+            <Button onClick={handleAddPayment} disabled={isProcessing || remainingAmount <= 0}>
               {isProcessing ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Procesando...</>
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Registrando...</>
               ) : (
-                <>Confirmar Pago</>
+                <>Agregar Pago</>
               )}
             </Button>
           </DialogFooter>

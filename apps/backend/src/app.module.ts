@@ -17,6 +17,8 @@ import { ReservationsModule } from './modules/reservations/reservations.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { HealthModule } from './modules/health/health.module';
+import { CashModule } from './modules/cash/cash.module';
+import { PrintModule } from './modules/print/print.module';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { HealthModule } from './modules/health/health.module';
     TablesModule,
     OrdersModule,
     PaymentsModule,
+    CashModule,
+    PrintModule,
     InventoryModule,
     ChildAccessModule,
     ReservationsModule,

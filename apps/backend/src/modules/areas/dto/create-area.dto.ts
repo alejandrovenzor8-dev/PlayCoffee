@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsInt,
+  Min,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateAreaDto {
   @ApiProperty({ example: 'Interior', description: 'Nombre del área' })
@@ -7,13 +14,19 @@ export class CreateAreaDto {
   @MaxLength(100)
   name: string;
 
-  @ApiPropertyOptional({ example: 'Área principal del restaurante', description: 'Descripción del área' })
+  @ApiPropertyOptional({
+    example: 'Área principal del restaurante',
+    description: 'Descripción del área',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(500)
   description?: string;
 
-  @ApiPropertyOptional({ example: '#3b82f6', description: 'Color hexadecimal para el área' })
+  @ApiPropertyOptional({
+    example: '#3b82f6',
+    description: 'Color hexadecimal para el área',
+  })
   @IsString()
   @IsOptional()
   color?: string;

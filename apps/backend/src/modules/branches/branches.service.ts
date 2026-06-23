@@ -12,7 +12,7 @@ export class BranchesService {
   }
 
   async findOne(id: string) {
-    const branch = await this.prisma.branch.findUnique({
+    const branch = await this.prisma.branch.findFirst({
       where: { id, deletedAt: null },
     });
     if (!branch) throw new NotFoundException('Branch not found');

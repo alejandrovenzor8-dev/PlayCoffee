@@ -25,7 +25,10 @@ function assertJwtSecret(name: string, value: string, isProduction: boolean) {
     throw new Error(`${name} must be at least 32 characters long`);
   }
 
-  if (isProduction && PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(value))) {
+  if (
+    isProduction &&
+    PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(value))
+  ) {
     throw new Error(`${name} must not use a placeholder value in production`);
   }
 }
@@ -41,14 +44,20 @@ export function validateEnv(env: Env) {
   const isProduction = nodeEnv === 'production';
 
   assertJwtSecret('JWT_SECRET', validated.JWT_SECRET, isProduction);
-  assertJwtSecret('JWT_REFRESH_SECRET', validated.JWT_REFRESH_SECRET, isProduction);
+  assertJwtSecret(
+    'JWT_REFRESH_SECRET',
+    validated.JWT_REFRESH_SECRET,
+    isProduction,
+  );
 
   const port = Number(validated.PORT);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error('PORT must be a valid TCP port');
   }
 
-  const origins = validated.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
+  const origins = validated.CORS_ORIGIN.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   if (origins.length === 0) {
     throw new Error('CORS_ORIGIN must include at least one origin');
   }

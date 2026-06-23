@@ -9,9 +9,24 @@ export class CreateInventoryItemDto {
   @ApiProperty() @IsString() name: string;
   @ApiPropertyOptional() @IsString() @IsOptional() unit?: string;
   @ApiProperty() @IsNumber() @Min(0) @Type(() => Number) currentStock: number;
-  @ApiPropertyOptional() @IsNumber() @Min(0) @IsOptional() @Type(() => Number) minStock?: number;
-  @ApiPropertyOptional() @IsNumber() @Min(0) @IsOptional() @Type(() => Number) maxStock?: number;
-  @ApiPropertyOptional() @IsNumber() @Min(0) @IsOptional() @Type(() => Number) costPerUnit?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  minStock?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  maxStock?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  costPerUnit?: number;
 }
 
 export class InventoryMovementDto {

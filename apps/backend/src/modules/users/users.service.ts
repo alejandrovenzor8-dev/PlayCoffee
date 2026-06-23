@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -9,21 +14,38 @@ export class UsersService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.user.findMany({
       where: { deletedAt: null, ...(branchId ? { branchId } : {}) },
       select: {
-        id: true, email: true, firstName: true, lastName: true,
-        role: true, branchId: true, isActive: true, createdAt: true, phone: true, avatarUrl: true,
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        branchId: true,
+        isActive: true,
+        createdAt: true,
+        phone: true,
+        avatarUrl: true,
       },
     });
   }
 
-  async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id, deletedAt: null },
+  async findOne(id: string, branchId?: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null, ...(branchId ? { branchId } : {}) },
       select: {
-        id: true, email: true, firstName: true, lastName: true,
-        role: true, branchId: true, isActive: true, createdAt: true, phone: true, avatarUrl: true,
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        branchId: true,
+        isActive: true,
+        createdAt: true,
+        phone: true,
+        avatarUrl: true,
       },
     });
     if (!user) throw new NotFoundException('User not found');
@@ -31,7 +53,10 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto) {
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!dto.branchId) throw new BadRequestException('branchId is required');
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
     if (existing) throw new ConflictException('Email already registered');
 
     const { password, pin, ...rest } = dto;
@@ -42,24 +67,38 @@ export class UsersService {
       data: { ...rest, passwordHash, pin: pinHash },
     });
 
-    const { passwordHash: _ph, pin: _pin, refreshToken: _rt, ...safeUser } = user;
+    const {
+      passwordHash: _ph,
+      pin: _pin,
+      refreshToken: _rt,
+      ...safeUser
+    } = user;
     return safeUser;
   }
 
-  async update(id: string, dto: UpdateUserDto) {
-    await this.findOne(id);
+  async update(id: string, dto: UpdateUserDto, branchId?: string) {
+    await this.findOne(id, branchId);
     const { pin, ...rest } = dto;
     const pinHash = pin ? await bcrypt.hash(pin, 10) : undefined;
     const user = await this.prisma.user.update({
       where: { id },
-      data: { ...rest, ...(pinHash ? { pin: pinHash } : {}) },
+      data: {
+        ...rest,
+        ...(branchId ? { branchId } : {}),
+        ...(pinHash ? { pin: pinHash } : {}),
+      },
     });
-    const { passwordHash, pin: _p, refreshToken, ...safeUser } = user;
+    const {
+      passwordHash: _passwordHash,
+      pin: _pin,
+      refreshToken: _refreshToken,
+      ...safeUser
+    } = user;
     return safeUser;
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, branchId?: string) {
+    await this.findOne(id, branchId);
     return this.prisma.user.update({
       where: { id },
       data: { deletedAt: new Date() },

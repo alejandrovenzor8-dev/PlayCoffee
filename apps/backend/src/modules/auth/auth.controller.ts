@@ -5,9 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
-  Req,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, PinLoginDto } from './dto/login.dto';

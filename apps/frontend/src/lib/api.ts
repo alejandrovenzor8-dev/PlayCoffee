@@ -1,6 +1,16 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import { useAuthStore } from "@/store/auth.store";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+let refreshPromise: Promise<string | null> | null = null;
+
+function clearClientAuth() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+  }
+  useAuthStore.getState().clearAuth();
+}
 
 export const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -11,7 +21,7 @@ export const api = axios.create({
 // Attach access token to every request
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("accessToken");
+    const token = useAuthStore.getState().accessToken ?? localStorage.getItem("accessToken");
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -27,26 +37,55 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
-      const refreshToken = localStorage.getItem("refreshToken");
+      const refreshToken =
+        useAuthStore.getState().refreshToken ?? localStorage.getItem("refreshToken");
 
       if (refreshToken) {
         try {
-          const { data } = await axios.post(`${BASE_URL}/api/v1/auth/refresh`, {
-            refreshToken,
-          });
-          localStorage.setItem("accessToken", data.data.accessToken);
-          localStorage.setItem("refreshToken", data.data.refreshToken);
+          refreshPromise ??= axios
+            .post(`${BASE_URL}/api/v1/auth/refresh`, { refreshToken })
+            .then(({ data }) => {
+              const tokens = data.data;
+              const currentUser = useAuthStore.getState().user;
+              if (!currentUser) return null;
+              useAuthStore.getState().setAuth(
+                currentUser,
+                tokens.accessToken,
+                tokens.refreshToken,
+              );
+              return tokens.accessToken as string;
+            })
+            .catch(() => {
+              clearClientAuth();
+              return null;
+            })
+            .finally(() => {
+              refreshPromise = null;
+            });
+
+          const accessToken = await refreshPromise;
+          if (!accessToken) {
+            if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+              window.location.href = "/login";
+            }
+            return Promise.reject(error);
+          }
+
           if (original.headers) {
-            original.headers.Authorization = `Bearer ${data.data.accessToken}`;
+            original.headers.Authorization = `Bearer ${accessToken}`;
           }
           return api(original);
         } catch {
-          localStorage.removeItem("accessToken");
-          localStorage.removeItem("refreshToken");
-          window.location.href = "/login";
+          clearClientAuth();
+          if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+            window.location.href = "/login";
+          }
         }
       } else {
-        window.location.href = "/login";
+        clearClientAuth();
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
       }
     }
 
@@ -123,6 +162,28 @@ export const paymentsApi = {
   create: (data: unknown) => api.post("/payments", data).then((r) => r.data.data),
   getByOrder: (orderId: string) =>
     api.get(`/payments/order/${orderId}`).then((r) => r.data.data),
+};
+
+export const printApi = {
+  customer: (orderId: string) =>
+    api.get(`/print/order/${orderId}/customer`).then((r) => r.data.data),
+  kitchen: (orderId: string) =>
+    api.get(`/print/order/${orderId}/kitchen`).then((r) => r.data.data),
+  bar: (orderId: string) =>
+    api.get(`/print/order/${orderId}/bar`).then((r) => r.data.data),
+};
+
+export const cashApi = {
+  getCurrent: () => api.get("/cash/current").then((r) => r.data.data),
+  open: (data: { openingBalance: number; notes?: string }) =>
+    api.post("/cash/open", data).then((r) => r.data.data),
+  addMovement: (data: { type: "IN" | "OUT"; amount: number; reason: string }) =>
+    api.post("/cash/movements", data).then((r) => r.data.data),
+  close: (data: { closingBalance: number; notes?: string }) =>
+    api.patch("/cash/close", data).then((r) => r.data.data),
+  history: (params?: { from?: string; to?: string }) =>
+    api.get("/cash/history", { params }).then((r) => r.data.data),
+  detail: (id: string) => api.get(`/cash/${id}`).then((r) => r.data.data),
 };
 
 export const childAccessApi = {

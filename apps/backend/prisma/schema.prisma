@@ -79,6 +79,11 @@ enum ChildAccessType {
   RENEWAL
 }
 
+enum CashMovementType {
+  IN
+  OUT
+}
+
 // ─────────────────────────────────────────────
 // Branch
 // ─────────────────────────────────────────────
@@ -101,6 +106,7 @@ model Branch {
   tableAreas     TableArea[]
   orders         Order[]
   shifts         Shift[]
+  cashMovements  CashMovement[]
   settings       Setting[]
   reservations   Reservation[]
   cameras        Camera[]
@@ -195,7 +201,9 @@ model User {
   branch        Branch?        @relation(fields: [branchId], references: [id])
   roles         UserRole[]
   orders        Order[]
+  payments      Payment[]
   shifts        Shift[]
+  cashMovements CashMovement[]
   notifications Notification[]
 
   @@map("users")
@@ -400,9 +408,12 @@ model OrderItemModifier {
 model Payment {
   id          String        @id @default(uuid())
   orderId     String
+  shiftId     String?
+  userId      String?
   method      PaymentMethod
   status      PaymentStatus @default(PENDING)
   amount      Decimal       @db.Decimal(10, 2)
+  receivedAmount Decimal?   @db.Decimal(10, 2)
   tipAmount   Decimal       @default(0) @db.Decimal(10, 2)
   change      Decimal?      @db.Decimal(10, 2)
   reference   String? // External transaction reference
@@ -411,8 +422,12 @@ model Payment {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  order Order @relation(fields: [orderId], references: [id])
+  order Order  @relation(fields: [orderId], references: [id])
+  shift Shift? @relation(fields: [shiftId], references: [id])
+  user  User?  @relation(fields: [userId], references: [id])
 
+  @@index([shiftId])
+  @@index([userId])
   @@map("payments")
 }
 
@@ -426,6 +441,14 @@ model Shift {
   userId         String
   openingBalance Decimal   @db.Decimal(10, 2)
   closingBalance Decimal?  @db.Decimal(10, 2)
+  expectedCash   Decimal?  @db.Decimal(10, 2)
+  cashDifference Decimal?  @db.Decimal(10, 2)
+  totalSales     Decimal?  @db.Decimal(10, 2)
+  totalCash      Decimal?  @db.Decimal(10, 2)
+  totalCard      Decimal?  @db.Decimal(10, 2)
+  totalTransfer  Decimal?  @db.Decimal(10, 2)
+  totalIn        Decimal?  @db.Decimal(10, 2)
+  totalOut       Decimal?  @db.Decimal(10, 2)
   openedAt       DateTime  @default(now())
   closedAt       DateTime?
   notes          String?
@@ -434,8 +457,30 @@ model Shift {
 
   branch Branch @relation(fields: [branchId], references: [id])
   user   User   @relation(fields: [userId], references: [id])
+  payments Payment[]
+  movements CashMovement[]
 
+  @@index([branchId, closedAt])
   @@map("shifts")
+}
+
+model CashMovement {
+  id        String           @id @default(uuid())
+  shiftId   String
+  branchId  String
+  userId    String
+  type      CashMovementType
+  amount    Decimal          @db.Decimal(10, 2)
+  reason    String
+  createdAt DateTime         @default(now())
+
+  shift  Shift  @relation(fields: [shiftId], references: [id])
+  branch Branch @relation(fields: [branchId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([branchId, createdAt])
+  @@index([shiftId])
+  @@map("cash_movements")
 }
 
 // ─────────────────────────────────────────────

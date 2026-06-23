@@ -1,18 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ordersApi } from "@/lib/api";
+import { ordersApi, printApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useOrdersStore } from "@/store/orders.store";
 import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
-import type { Order, OrderStatus } from "@/types/orders.types";
+import type { OrderStatus } from "@/types/orders.types";
+import type { PrintTicketDocument, PrintTicketType } from "@/types/print.types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
-import { ClipboardList, RefreshCw, ChevronRight, Loader2 } from "lucide-react";
+import { BarTicket } from "@/components/print/BarTicket";
+import { CustomerReceipt } from "@/components/print/CustomerReceipt";
+import { KitchenTicket } from "@/components/print/KitchenTicket";
+import { PrintableTicket } from "@/components/print/PrintableTicket";
+import {
+  ChefHat,
+  ClipboardList,
+  Coffee,
+  Printer,
+  RefreshCw,
+  ChevronRight,
+  Loader2,
+} from "lucide-react";
 
 const STATUS_CONFIG: Record<OrderStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" }> = {
   PENDING: { label: "Pendiente", variant: "warning" },
@@ -37,6 +50,9 @@ export default function OrdersPage() {
   const { orders, setOrders, updateOrder, isLoading, setLoading } = useOrdersStore();
   const [activeTab, setActiveTab] = useState("active");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [printDocument, setPrintDocument] = useState<PrintTicketDocument | null>(null);
+  const [printOpen, setPrintOpen] = useState(false);
+  const [isPrinting, setIsPrinting] = useState<string | null>(null);
 
   const loadOrders = () => {
     setLoading(true);
@@ -62,6 +78,38 @@ export default function OrdersPage() {
     } catch {
       setLoadError("No se pudo actualizar la orden. Intenta de nuevo.");
     }
+  };
+
+  const canPrintCustomer = user?.role === "ADMIN" || user?.role === "CASHIER";
+
+  const handlePrint = async (orderId: string, type: PrintTicketType) => {
+    setIsPrinting(`${orderId}-${type}`);
+    setLoadError(null);
+    try {
+      const document =
+        type === "CUSTOMER"
+          ? await printApi.customer(orderId)
+          : type === "KITCHEN"
+            ? await printApi.kitchen(orderId)
+            : await printApi.bar(orderId);
+      setPrintDocument(document);
+      setPrintOpen(true);
+    } catch {
+      setLoadError("No se pudo preparar el ticket. Verifica permisos y sucursal.");
+    } finally {
+      setIsPrinting(null);
+    }
+  };
+
+  const renderPrintDocument = () => {
+    if (!printDocument) return null;
+    if (printDocument.type === "CUSTOMER") {
+      return <CustomerReceipt document={printDocument} />;
+    }
+    if (printDocument.type === "KITCHEN") {
+      return <KitchenTicket document={printDocument} />;
+    }
+    return <BarTicket document={printDocument} />;
   };
 
   const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -148,7 +196,39 @@ export default function OrdersPage() {
                           ))}
                         </ul>
 
-                        <div className="flex items-center justify-between border-t pt-3">
+                        <div className="grid grid-cols-3 gap-2 border-t pt-3">
+                          {canPrintCustomer && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePrint(order.id, "CUSTOMER")}
+                              disabled={isPrinting === `${order.id}-CUSTOMER`}
+                            >
+                              <Printer className="h-3.5 w-3.5 mr-1" />
+                              Cliente
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handlePrint(order.id, "KITCHEN")}
+                            disabled={isPrinting === `${order.id}-KITCHEN`}
+                          >
+                            <ChefHat className="h-3.5 w-3.5 mr-1" />
+                            Cocina
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handlePrint(order.id, "BAR")}
+                            disabled={isPrinting === `${order.id}-BAR`}
+                          >
+                            <Coffee className="h-3.5 w-3.5 mr-1" />
+                            Barra
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center justify-between">
                           <span className="text-sm font-bold">{formatCurrency(order.total)}</span>
                           {next && (
                             <Button
@@ -170,6 +250,14 @@ export default function OrdersPage() {
           </TabsContent>
         ))}
       </Tabs>
+      <PrintableTicket
+        open={printOpen}
+        onOpenChange={setPrintOpen}
+        document={printDocument}
+        title="Vista de impresion"
+      >
+        {renderPrintDocument()}
+      </PrintableTicket>
     </div>
   );
 }

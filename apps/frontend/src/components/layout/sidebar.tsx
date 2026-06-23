@@ -17,6 +17,7 @@ import {
   BarChart3,
   Settings,
   Coffee,
+  WalletCards,
   LogOut,
   ChevronRight,
 } from "lucide-react";
@@ -24,6 +25,7 @@ import {
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/pos", label: "Caja / POS", icon: ShoppingCart },
+  { href: "/cash", label: "Corte de Caja", icon: WalletCards },
   { href: "/tables", label: "Mesas", icon: Table2 },
   { href: "/orders", label: "Comandero", icon: ClipboardList },
   { href: "/children", label: "Control Infantil", icon: Baby },

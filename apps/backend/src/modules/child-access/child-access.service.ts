@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateChildAccessDto } from './dto/create-child-access.dto';
 import { ChildAccessType } from '@prisma/client';
@@ -12,6 +16,7 @@ export class ChildAccessService {
   ) {}
 
   async findActive(branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.childAccess.findMany({
       where: {
         exitTime: null,
@@ -23,6 +28,7 @@ export class ChildAccessService {
   }
 
   async findAll(branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.prisma.childAccess.findMany({
       where: {
         ...(branchId ? { branchId } : {}),
@@ -32,7 +38,10 @@ export class ChildAccessService {
     });
   }
 
-  async register(dto: CreateChildAccessDto & { branchId: string }, userId?: string) {
+  async register(
+    dto: CreateChildAccessDto & { branchId: string },
+    userId?: string,
+  ) {
     const record = await this.prisma.childAccess.create({ data: dto });
 
     await this.audit.record({
