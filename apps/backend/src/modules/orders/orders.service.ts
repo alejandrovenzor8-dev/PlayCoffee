@@ -8,12 +8,14 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus, TableStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { InventoryService } from '../inventory/inventory.service';
 
 @Injectable()
 export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private inventoryService: InventoryService,
   ) {}
 
   async findAll(branchId?: string, status?: OrderStatus) {
@@ -239,6 +241,22 @@ export class OrdersService {
         where: { id: order.tableId },
         data: { status: TableStatus.AVAILABLE },
       });
+    }
+
+    if (dto.status === OrderStatus.COMPLETED) {
+      await this.inventoryService.discountOrderStock(
+        updatedOrder.id,
+        updatedOrder.branchId,
+        userId,
+      );
+    }
+
+    if (dto.status === OrderStatus.CANCELLED) {
+      await this.inventoryService.reverseOrderStock(
+        updatedOrder.id,
+        updatedOrder.branchId,
+        userId,
+      );
     }
 
     await this.audit.record({

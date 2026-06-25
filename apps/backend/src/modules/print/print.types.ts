@@ -2,8 +2,6 @@ import { PaymentMethod } from '@prisma/client';
 
 export type PrintTicketType = 'CUSTOMER' | 'KITCHEN' | 'BAR';
 
-export type PrintStation = 'KITCHEN' | 'BAR';
-
 export type PrintTicketDocument = {
   type: PrintTicketType;
   width: '58mm' | '80mm';

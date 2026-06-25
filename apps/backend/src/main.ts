@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -9,15 +10,44 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  const isProduction = process.env.NODE_ENV === 'production';
   const app = await NestFactory.create(AppModule, {
-    logger: ['log', 'error', 'warn', 'debug'],
+    logger: isProduction
+      ? ['log', 'error', 'warn']
+      : ['log', 'error', 'warn', 'debug'],
   });
   const config = app.get(ConfigService);
 
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  const httpInstance = app.getHttpAdapter().getInstance() as {
+    disable(setting: string): void;
+  };
+  httpInstance.disable('x-powered-by');
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()',
+    );
+    if (isProduction) {
+      res.setHeader(
+        'Strict-Transport-Security',
+        'max-age=31536000; includeSubDomains',
+      );
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      );
+    }
+    next();
+  });
 
+  const corsOrigins = config.getOrThrow<string>('CORS_ORIGIN').split(',');
   app.enableCors({
-    origin: config.getOrThrow<string>('CORS_ORIGIN').split(','),
+    origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -61,4 +91,4 @@ async function bootstrap() {
   logger.log(`Environment: ${config.getOrThrow<string>('NODE_ENV')}`);
 }
 
-bootstrap();
+void bootstrap();

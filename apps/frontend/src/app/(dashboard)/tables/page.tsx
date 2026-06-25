@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTablesStore } from "@/store/tables.store";
 import { useAreasStore } from "@/store/areas.store";
@@ -17,6 +17,8 @@ import { areasApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
 import type { RestaurantTable } from "@/types/orders.types";
+import { useRealtime } from "@/hooks/useRealtime";
+import { RealtimeIndicator } from "@/components/realtime/realtime-indicator";
 
 export default function TablesPage() {
   const { user } = useAuthStore();
@@ -32,10 +34,22 @@ export default function TablesPage() {
   } = useTableLayout(selectedAreaId || "");
 
   // Cargar áreas activas
-  const { data: areasData, isLoading: areasLoading } = useQuery({
+  const { data: areasData, isLoading: areasLoading, refetch: refetchAreas } = useQuery({
     queryKey: ["areas", "active", branchId],
     queryFn: () => areasApi.getActive(branchId),
   });
+  const realtimeEvents = useMemo(() => ({
+    "table.updated": () => loadTables(),
+    "table.status.changed": () => loadTables(),
+    "table.layout.updated": () => {
+      refetchAreas();
+      loadTables();
+    },
+    "order.created": () => loadTables(),
+    "order.completed": () => loadTables(),
+    "order.cancelled": () => loadTables(),
+  }), [loadTables, refetchAreas]);
+  const { status: realtimeStatus } = useRealtime(realtimeEvents);
 
   // Cargar áreas y seleccionar la primera al inicio
   useEffect(() => {
@@ -119,6 +133,7 @@ export default function TablesPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <RealtimeIndicator status={realtimeStatus} />
           {!isEditMode && (
             <>
               <Button variant="outline" size="sm" onClick={() => loadTables()}>

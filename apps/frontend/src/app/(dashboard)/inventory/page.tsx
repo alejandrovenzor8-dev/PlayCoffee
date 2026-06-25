@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { inventoryApi } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { inventoryApi, productsApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
 import { cn, formatDate } from "@/lib/utils";
@@ -24,6 +24,9 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AlertTriangle, ArrowUpDown, Loader2, Package, Plus, TrendingDown, TrendingUp,
 } from "lucide-react";
+import type { Product } from "@/types/pos.types";
+import { useRealtime } from "@/hooks/useRealtime";
+import { RealtimeIndicator } from "@/components/realtime/realtime-indicator";
 
 type MovementType = "IN" | "OUT" | "ADJUSTMENT" | "WASTE" | "TRANSFER";
 
@@ -44,6 +47,7 @@ interface StockMovement {
   type: MovementType;
   quantity: number | string;
   notes?: string;
+  reason?: string;
   createdAt: string;
 }
 
@@ -59,18 +63,29 @@ export default function InventoryPage() {
   const { user } = useAuthStore();
   const branchId = getActiveBranchId(user);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [view, setView] = useState<"items" | "movements">("items");
   const [movementOpen, setMovementOpen] = useState(false);
+  const [itemOpen, setItemOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [search, setSearch] = useState("");
+  const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [movForm, setMovForm] = useState({
     type: "IN" as MovementType,
     quantity: "",
-    notes: "",
+    reason: "",
+  });
+  const [itemForm, setItemForm] = useState({
+    productId: "none",
+    name: "",
+    unit: "unit",
+    currentStock: "",
+    minStock: "0",
+    costPerUnit: "0",
   });
 
   const loadData = useCallback(() => {
@@ -79,10 +94,12 @@ export default function InventoryPage() {
     Promise.all([
       inventoryApi.getItems(branchId),
       inventoryApi.getMovements({ branchId }),
+      productsApi.getAll({ isActive: "true" }),
     ])
-      .then(([nextItems, nextMovements]) => {
+      .then(([nextItems, nextMovements, nextProducts]) => {
         setItems(nextItems);
         setMovements(nextMovements);
+        setProducts(nextProducts);
       })
       .catch(() => {
         setItems([]);
@@ -91,6 +108,14 @@ export default function InventoryPage() {
       })
       .finally(() => setIsLoading(false));
   }, [branchId]);
+
+  const realtimeEvents = useMemo(() => ({
+    "inventory.stock.changed": () => loadData(),
+    "inventory.low_stock": () => loadData(),
+    "order.completed": () => loadData(),
+    "order.cancelled": () => loadData(),
+  }), [loadData]);
+  const { status: realtimeStatus } = useRealtime(realtimeEvents);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -103,11 +128,11 @@ export default function InventoryPage() {
         inventoryItemId: selectedItem.id,
         type: movForm.type,
         quantity: Number(movForm.quantity),
-        notes: movForm.notes || undefined,
+        reason: movForm.reason || undefined,
       });
       setMovementOpen(false);
       setSelectedItem(null);
-      setMovForm({ type: "IN", quantity: "", notes: "" });
+      setMovForm({ type: "IN", quantity: "", reason: "" });
       loadData();
     } catch {
       setLoadError("No se pudo registrar el movimiento. Intenta de nuevo.");
@@ -116,10 +141,35 @@ export default function InventoryPage() {
     }
   };
 
+  const handleCreateItem = async () => {
+    setIsSubmitting(true);
+    setLoadError(null);
+    try {
+      const selectedProduct = products.find((product) => product.id === itemForm.productId);
+      await inventoryApi.create({
+        productId: itemForm.productId === "none" ? undefined : itemForm.productId,
+        name: itemForm.name || selectedProduct?.name,
+        unit: itemForm.unit,
+        currentStock: Number(itemForm.currentStock || 0),
+        minStock: Number(itemForm.minStock || 0),
+        costPerUnit: Number(itemForm.costPerUnit || 0),
+      });
+      setItemOpen(false);
+      setItemForm({ productId: "none", name: "", unit: "unit", currentStock: "", minStock: "0", costPerUnit: "0" });
+      loadData();
+    } catch {
+      setLoadError("No se pudo crear el item de inventario. Revisa duplicados y campos.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const filteredItems = items.filter((item) => {
     const query = search.toLowerCase();
     const category = item.product?.category?.name ?? "";
-    return item.name.toLowerCase().includes(query) || category.toLowerCase().includes(query);
+    const matches = item.name.toLowerCase().includes(query) || category.toLowerCase().includes(query);
+    const isLow = Number(item.currentStock) <= Number(item.minStock);
+    return matches && (!onlyLowStock || isLow);
   });
 
   const lowStockItems = items.filter((item) => Number(item.currentStock) <= Number(item.minStock));
@@ -131,11 +181,15 @@ export default function InventoryPage() {
         description="Control de stock e insumos"
         actions={
           <div className="flex gap-2">
+            <RealtimeIndicator status={realtimeStatus} />
             <Button variant={view === "items" ? "default" : "outline"} size="sm" onClick={() => setView("items")}>
               <Package className="mr-2 h-4 w-4" />Stock
             </Button>
             <Button variant={view === "movements" ? "default" : "outline"} size="sm" onClick={() => setView("movements")}>
               <ArrowUpDown className="mr-2 h-4 w-4" />Movimientos
+            </Button>
+            <Button size="sm" onClick={() => setItemOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />Item
             </Button>
           </div>
         }
@@ -173,6 +227,14 @@ export default function InventoryPage() {
             onChange={(event) => setSearch(event.target.value)}
             className="max-w-sm"
           />
+          <Button
+            variant={onlyLowStock ? "default" : "outline"}
+            size="sm"
+            onClick={() => setOnlyLowStock((value) => !value)}
+          >
+            <AlertTriangle className="mr-2 h-4 w-4" />
+            Stock bajo
+          </Button>
           <Card>
             <Table>
               <TableHeader>
@@ -258,7 +320,7 @@ export default function InventoryPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-mono">{Number(movement.quantity)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{movement.notes ?? "-"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{movement.reason ?? movement.notes ?? "-"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{formatDate(movement.createdAt)}</TableCell>
                   </TableRow>
                 );
@@ -286,7 +348,6 @@ export default function InventoryPage() {
                     <SelectItem value="OUT">Salida</SelectItem>
                     <SelectItem value="ADJUSTMENT">Ajuste</SelectItem>
                     <SelectItem value="WASTE">Merma</SelectItem>
-                    <SelectItem value="TRANSFER">Transferencia</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -301,11 +362,11 @@ export default function InventoryPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Nota</Label>
+                <Label>Motivo</Label>
                 <Textarea
-                  placeholder="Proveedor, motivo..."
-                  value={movForm.notes}
-                  onChange={(event) => setMovForm((form) => ({ ...form, notes: event.target.value }))}
+                  placeholder="Proveedor, merma, ajuste..."
+                  value={movForm.reason}
+                  onChange={(event) => setMovForm((form) => ({ ...form, reason: event.target.value }))}
                 />
               </div>
             </div>
@@ -315,6 +376,66 @@ export default function InventoryPage() {
             <Button onClick={handleMovement} disabled={!movForm.quantity || isSubmitting}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={itemOpen} onOpenChange={setItemOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>Crear item de inventario</DialogTitle></DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Producto</Label>
+              <Select
+                value={itemForm.productId}
+                onValueChange={(value) => {
+                  const product = products.find((item) => item.id === value);
+                  setItemForm((form) => ({
+                    ...form,
+                    productId: value,
+                    name: product?.name ?? form.name,
+                    costPerUnit: product?.cost ? String(product.cost) : form.costPerUnit,
+                  }));
+                }}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin producto ligado</SelectItem>
+                  {products.map((product) => (
+                    <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Nombre</Label>
+                <Input value={itemForm.name} onChange={(event) => setItemForm((form) => ({ ...form, name: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Unidad</Label>
+                <Input value={itemForm.unit} onChange={(event) => setItemForm((form) => ({ ...form, unit: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Stock actual</Label>
+                <Input type="number" min="0" step="0.001" value={itemForm.currentStock} onChange={(event) => setItemForm((form) => ({ ...form, currentStock: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Stock minimo</Label>
+                <Input type="number" min="0" step="0.001" value={itemForm.minStock} onChange={(event) => setItemForm((form) => ({ ...form, minStock: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Costo unitario</Label>
+                <Input type="number" min="0" step="0.01" value={itemForm.costPerUnit} onChange={(event) => setItemForm((form) => ({ ...form, costPerUnit: event.target.value }))} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setItemOpen(false)}>Cancelar</Button>
+            <Button onClick={handleCreateItem} disabled={isSubmitting || !itemForm.name}>
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Crear
             </Button>
           </DialogFooter>
         </DialogContent>

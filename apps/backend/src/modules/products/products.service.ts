@@ -7,15 +7,33 @@ import { UpdateProductDto } from './dto/update-product.dto';
 export class ProductsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(categoryId?: string, search?: string) {
+  async findAll(
+    categoryId?: string,
+    search?: string,
+    isActive?: boolean | null,
+  ) {
     return this.prisma.product.findMany({
       where: {
         deletedAt: null,
-        isActive: true,
+        ...(isActive === null
+          ? {}
+          : { isActive: isActive === undefined ? true : isActive }),
         ...(categoryId ? { categoryId } : {}),
         ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
       },
-      include: { category: true, modifiers: { include: { modifier: true } } },
+      include: {
+        category: true,
+        modifiers: { include: { modifier: true } },
+        inventoryItems: {
+          where: { deletedAt: null, isActive: true },
+          select: {
+            id: true,
+            currentStock: true,
+            minStock: true,
+            unit: true,
+          },
+        },
+      },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
@@ -30,7 +48,19 @@ export class ProductsService {
   async findOne(id: string) {
     const product = await this.prisma.product.findFirst({
       where: { id, deletedAt: null },
-      include: { category: true, modifiers: { include: { modifier: true } } },
+      include: {
+        category: true,
+        modifiers: { include: { modifier: true } },
+        inventoryItems: {
+          where: { deletedAt: null, isActive: true },
+          select: {
+            id: true,
+            currentStock: true,
+            minStock: true,
+            unit: true,
+          },
+        },
+      },
     });
     if (!product) throw new NotFoundException('Product not found');
     return product;

@@ -1,3 +1,5 @@
+export type PreparationStation = "KITCHEN" | "BAR" | "NONE";
+
 export interface Product {
   id: string;
   categoryId?: string;
@@ -7,11 +9,15 @@ export interface Product {
   cost?: number;
   imageUrl?: string;
   sku?: string;
+  barcode?: string;
   isActive: boolean;
   isFeatured: boolean;
+  trackInventory: boolean;
   taxRate: number;
+  preparationStation: PreparationStation;
   category?: Category;
   modifiers?: ProductModifier[];
+  inventoryItems?: ProductInventoryItem[];
 }
 
 export interface Category {
@@ -36,6 +42,13 @@ export interface ProductModifier {
   productId: string;
   modifierId: string;
   modifier: Modifier;
+}
+
+export interface ProductInventoryItem {
+  id: string;
+  currentStock: number;
+  minStock: number;
+  unit: string;
 }
 
 export interface CartItem {

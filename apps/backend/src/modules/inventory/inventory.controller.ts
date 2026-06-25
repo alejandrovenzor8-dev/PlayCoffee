@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -13,6 +14,7 @@ import { InventoryService } from './inventory.service';
 import {
   CreateInventoryItemDto,
   InventoryMovementDto,
+  UpdateInventoryItemDto,
 } from './dto/create-inventory-item.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -39,6 +41,14 @@ export class InventoryController {
     return this.inventoryService.findAll(search, userBranchId ?? branchId);
   }
 
+  @Get('low-stock')
+  findLowStock(
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.inventoryService.findLowStock(userBranchId ?? branchId);
+  }
+
   @Post()
   create(
     @Body() dto: CreateInventoryItemDto,
@@ -52,14 +62,38 @@ export class InventoryController {
     });
   }
 
+  @Post('items')
+  createItem(
+    @Body() dto: CreateInventoryItemDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    const branchId = userBranchId ?? dto.branchId;
+    if (!branchId) throw new BadRequestException('branchId is required');
+    return this.inventoryService.create({
+      ...dto,
+      branchId,
+    });
+  }
+
+  @Patch('items/:id')
+  updateItem(
+    @Param('id') id: string,
+    @Body() dto: UpdateInventoryItemDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.inventoryService.update(id, dto, userBranchId);
+  }
+
   @Post('movements')
   recordMovement(
     @Body() dto: InventoryMovementDto,
     @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
   ) {
     return this.inventoryService.recordMovement(
       dto,
       userBranchId ?? dto.branchId,
+      userId,
     );
   }
 

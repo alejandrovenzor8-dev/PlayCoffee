@@ -3,13 +3,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentStatus, PreparationStation } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  PrintStation,
-  PrintTicketDocument,
-  PrintTicketType,
-} from './print.types';
+import { PrintTicketDocument, PrintTicketType } from './print.types';
 
 @Injectable()
 export class PrintService {
@@ -80,9 +76,14 @@ export class PrintService {
       order.branch.settings.map((setting) => [setting.key, setting.value]),
     );
     const width = settings.get('ticket_width') === '58mm' ? '58mm' : '80mm';
-    const station = type === 'KITCHEN' || type === 'BAR' ? type : null;
+    const station =
+      type === 'KITCHEN'
+        ? PreparationStation.KITCHEN
+        : type === 'BAR'
+          ? PreparationStation.BAR
+          : null;
     const items = order.items
-      .filter((item) => !station || this.resolveStation(item) === station)
+      .filter((item) => !station || item.product.preparationStation === station)
       .map((item) => ({
         id: item.id,
         quantity: item.quantity,
@@ -162,35 +163,6 @@ export class PrintService {
             }
           : undefined,
     };
-  }
-
-  private resolveStation(item: {
-    product: { name: string; category?: { name: string } | null };
-  }): PrintStation {
-    const text = `${item.product.category?.name ?? ''} ${item.product.name}`
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase();
-    const barKeywords = [
-      'bar',
-      'bebida',
-      'bebidas',
-      'cafe',
-      'coffee',
-      'te',
-      'jugo',
-      'refresco',
-      'smoothie',
-      'frappe',
-      'cerveza',
-      'vino',
-      'cocktail',
-      'coctel',
-    ];
-
-    return barKeywords.some((keyword) => text.includes(keyword))
-      ? 'BAR'
-      : 'KITCHEN';
   }
 
   private formatUser(user: { firstName: string; lastName: string } | null) {

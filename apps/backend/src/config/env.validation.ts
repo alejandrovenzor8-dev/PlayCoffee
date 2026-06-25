@@ -2,6 +2,7 @@ type Env = Record<string, string | undefined>;
 
 const REQUIRED_ENV_VARS = [
   'DATABASE_URL',
+  'REDIS_URL',
   'JWT_SECRET',
   'JWT_REFRESH_SECRET',
   'JWT_EXPIRES_IN',
@@ -60,6 +61,19 @@ export function validateEnv(env: Env) {
     .filter(Boolean);
   if (origins.length === 0) {
     throw new Error('CORS_ORIGIN must include at least one origin');
+  }
+  if (isProduction && origins.includes('*')) {
+    throw new Error('CORS_ORIGIN must not be wildcard in production');
+  }
+  if (
+    isProduction &&
+    origins.some((origin) =>
+      /(^http:\/\/localhost[:/]|^http:\/\/127\.0\.0\.1[:/]|^http:\/\/0\.0\.0\.0[:/]|^\*)/i.test(
+        origin,
+      ),
+    )
+  ) {
+    throw new Error('CORS_ORIGIN must not point to localhost in production');
   }
 
   return {

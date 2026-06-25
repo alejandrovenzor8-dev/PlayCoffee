@@ -16,10 +16,10 @@ import {
 } from "lucide-react";
 
 interface Kpis {
-  today: { revenue: number; orders: number };
-  month: { revenue: number; orders: number };
-  activeTables: number;
-  activeChildren: number;
+  today?: { revenue?: number; orders?: number };
+  month?: { revenue?: number; orders?: number };
+  activeTables?: number;
+  activeChildren?: number;
 }
 
 interface SalesByDay {
@@ -126,6 +126,11 @@ export default function DashboardPage() {
     );
   }
 
+  const todayRevenue = kpis?.today?.revenue ?? 0;
+  const todayOrders = kpis?.today?.orders ?? 0;
+  const monthRevenue = kpis?.month?.revenue ?? 0;
+  const monthOrders = kpis?.month?.orders ?? 0;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -136,13 +141,13 @@ export default function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           title="Ventas Hoy"
-          value={formatCurrency(kpis?.today.revenue ?? 0)}
+          value={formatCurrency(todayRevenue)}
           icon={DollarSign}
           color="bg-blue-600"
         />
         <KpiCard
           title="Ordenes Hoy"
-          value={String(kpis?.today.orders ?? 0)}
+          value={String(todayOrders)}
           icon={ShoppingCart}
           color="bg-violet-600"
         />
@@ -224,16 +229,16 @@ export default function DashboardPage() {
           <div className="flex flex-wrap gap-8">
             <div>
               <p className="text-sm text-muted-foreground">Ventas del Mes</p>
-              <p className="mt-1 text-2xl font-bold">{formatCurrency(kpis?.month.revenue ?? 0)}</p>
+              <p className="mt-1 text-2xl font-bold">{formatCurrency(monthRevenue)}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Ordenes del Mes</p>
-              <p className="mt-1 text-2xl font-bold">{kpis?.month.orders ?? 0}</p>
+              <p className="mt-1 text-2xl font-bold">{monthOrders}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Ticket Promedio</p>
               <p className="mt-1 text-2xl font-bold">
-                {formatCurrency((kpis?.month.revenue ?? 0) / (kpis?.month.orders || 1))}
+                {formatCurrency(monthRevenue / (monthOrders || 1))}
               </p>
             </div>
           </div>

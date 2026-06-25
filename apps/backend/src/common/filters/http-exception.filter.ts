@@ -11,6 +11,7 @@ import { Request, Response } from 'express';
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
+  private readonly isProduction = process.env.NODE_ENV === 'production';
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -44,7 +45,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (status >= 500) {
       this.logger.error(
         `${request.method} ${request.url} -> ${status}`,
-        exception instanceof Error ? exception.stack : String(exception),
+        this.isProduction
+          ? undefined
+          : exception instanceof Error
+            ? exception.stack
+            : String(exception),
       );
     } else {
       this.logger.warn(

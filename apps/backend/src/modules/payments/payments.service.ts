@@ -10,9 +10,11 @@ import {
   PaymentStatus,
   OrderStatus,
   TableStatus,
+  MovementType,
   Prisma,
 } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 type PaymentSummaryStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
@@ -39,6 +41,7 @@ export class PaymentsService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private realtime: RealtimeGateway,
   ) {}
 
   async create(
@@ -61,7 +64,25 @@ export class PaymentsService {
           deletedAt: null,
           branchId,
         },
-        include: { payments: true },
+        include: {
+          payments: true,
+          items: {
+            include: {
+              product: {
+                include: {
+                  inventoryItems: {
+                    where: { branchId, deletedAt: null, isActive: true },
+                    select: {
+                      id: true,
+                      currentStock: true,
+                      minStock: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
 
       if (!order) throw new NotFoundException('Order not found');
@@ -142,9 +163,15 @@ export class PaymentsService {
       ]);
 
       if (summary.paymentStatus === 'PAID') {
+        await this.discountInventoryForPaidOrder(tx, order, userId);
+
         await tx.order.update({
           where: { id: dto.orderId },
-          data: { status: OrderStatus.COMPLETED, completedAt: new Date() },
+          data: {
+            status: OrderStatus.COMPLETED,
+            completedAt: new Date(),
+            inventoryDiscountedAt: order.inventoryDiscountedAt ?? new Date(),
+          },
         });
 
         if (order.tableId) {
@@ -173,6 +200,24 @@ export class PaymentsService {
         orderCompleted: result.summary.paymentStatus === 'PAID',
       },
     });
+
+    this.realtime.emitPaymentEvent(result.order.branchId, 'payment.created', {
+      id: result.payment.id,
+      orderId: result.order.id,
+      method: result.payment.method,
+      amount: result.payment.amount,
+    });
+    this.realtime.emitPaymentEvent(
+      result.order.branchId,
+      'order.payment_status.changed',
+      result.summary,
+    );
+    if (result.summary.paymentStatus === 'PAID') {
+      this.realtime.emitOrderEvent(result.order.branchId, 'order.completed', {
+        id: result.order.id,
+        status: OrderStatus.COMPLETED,
+      });
+    }
 
     return {
       payment: result.payment,
@@ -274,5 +319,84 @@ export class PaymentsService {
 
   private roundMoney(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private async discountInventoryForPaidOrder(
+    tx: Prisma.TransactionClient,
+    order: {
+      id: string;
+      orderNumber: string;
+      branchId: string;
+      inventoryDiscountedAt: Date | null;
+      items: Array<{
+        quantity: number;
+        product: {
+          name: string;
+          trackInventory: boolean;
+          inventoryItems: Array<{
+            id: string;
+            currentStock: Prisma.Decimal;
+            minStock: Prisma.Decimal;
+          }>;
+        };
+      }>;
+    },
+    userId?: string,
+  ) {
+    if (order.inventoryDiscountedAt) return;
+
+    for (const item of order.items) {
+      if (!item.product.trackInventory) continue;
+      const inventoryItem = item.product.inventoryItems[0];
+      if (!inventoryItem) {
+        throw new BadRequestException(
+          `Inventory item not configured for product ${item.product.name}`,
+        );
+      }
+
+      const currentStock = Number(inventoryItem.currentStock);
+      const newStock = currentStock - item.quantity;
+      if (newStock < 0) {
+        throw new BadRequestException(
+          `Insufficient stock for product ${item.product.name}`,
+        );
+      }
+
+      await tx.inventoryMovement.create({
+        data: {
+          inventoryItemId: inventoryItem.id,
+          userId,
+          type: MovementType.OUT,
+          quantity: item.quantity,
+          previousStock: currentStock,
+          newStock,
+          reason: 'Venta',
+          notes: `Descuento automatico por orden ${order.orderNumber}`,
+          reference: order.id,
+        },
+      });
+      await tx.inventoryItem.update({
+        where: { id: inventoryItem.id },
+        data: { currentStock: newStock },
+      });
+      const payload = {
+        id: inventoryItem.id,
+        currentStock: newStock,
+        minStock: Number(inventoryItem.minStock),
+        productName: item.product.name,
+      };
+      this.realtime.emitInventoryEvent(
+        order.branchId,
+        'inventory.stock.changed',
+        payload,
+      );
+      if (newStock <= Number(inventoryItem.minStock)) {
+        this.realtime.emitInventoryEvent(
+          order.branchId,
+          'inventory.low_stock',
+          payload,
+        );
+      }
+    }
   }
 }

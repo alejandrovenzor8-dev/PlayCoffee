@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -11,7 +12,10 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ReservationsService } from './reservations.service';
-import { CreateReservationDto } from './dto/create-reservation.dto';
+import {
+  CreateReservationDto,
+  UpdateReservationDto,
+} from './dto/create-reservation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ReservationStatus, UserRoleEnum } from '@prisma/client';
@@ -29,12 +33,53 @@ export class ReservationsController {
   @Get()
   @ApiQuery({ name: 'branchId', required: false })
   @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'status', required: false, enum: ReservationStatus })
   findAll(
     @Query('branchId') branchId?: string,
     @Query('date') date?: string,
+    @Query('status') status?: ReservationStatus,
     @CurrentUser('branchId') userBranchId?: string,
   ) {
-    return this.reservationsService.findAll(userBranchId ?? branchId, date);
+    return this.reservationsService.findAll(
+      userBranchId ?? branchId,
+      date,
+      status,
+    );
+  }
+
+  @Get('calendar')
+  @ApiQuery({ name: 'start', required: false })
+  @ApiQuery({ name: 'end', required: false })
+  calendar(
+    @Query('start') start?: string,
+    @Query('end') end?: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    const scopedBranchId = userBranchId ?? branchId;
+    if (!scopedBranchId) throw new BadRequestException('branchId is required');
+    return this.reservationsService.calendar(scopedBranchId, start, end);
+  }
+
+  @Get('availability')
+  @ApiQuery({ name: 'date', required: true })
+  @ApiQuery({ name: 'areaId', required: false })
+  @ApiQuery({ name: 'duration', required: false })
+  availability(
+    @Query('date') date: string,
+    @Query('areaId') areaId?: string,
+    @Query('duration') duration?: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    const scopedBranchId = userBranchId ?? branchId;
+    if (!scopedBranchId) throw new BadRequestException('branchId is required');
+    return this.reservationsService.availability(
+      scopedBranchId,
+      date,
+      areaId,
+      duration ? Number(duration) : undefined,
+    );
   }
 
   @Post()
@@ -42,10 +87,21 @@ export class ReservationsController {
     @Body() dto: CreateReservationDto,
     @CurrentUser('branchId') userBranchId?: string,
   ) {
+    const branchId = userBranchId ?? dto.branchId;
+    if (!branchId) throw new BadRequestException('branchId is required');
     return this.reservationsService.create({
       ...dto,
-      branchId: userBranchId ?? dto.branchId,
+      branchId,
     });
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateReservationDto,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.reservationsService.update(id, dto, userBranchId);
   }
 
   @Patch(':id/status')

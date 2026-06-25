@@ -17,10 +17,10 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { OrdersGateway } from './orders.gateway';
 import { OrderStatus, UserRoleEnum } from '@prisma/client';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 @ApiTags('Orders')
 @ApiBearerAuth('JWT')
@@ -30,7 +30,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
-    private readonly ordersGateway: OrdersGateway,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   @Get()
@@ -73,7 +73,12 @@ export class OrdersController {
       { ...dto, branchId: userBranchId ?? dto.branchId },
       userId,
     );
-    this.ordersGateway.emitOrderCreated(order.branchId, order);
+    this.realtime.emitOrderEvent(order.branchId, 'order.created', {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      total: order.total,
+    });
     return order;
   }
 
@@ -90,7 +95,28 @@ export class OrdersController {
       userBranchId,
       userId,
     );
-    this.ordersGateway.emitOrderUpdated(order.branchId, order);
+    const event =
+      order.status === OrderStatus.COMPLETED
+        ? 'order.completed'
+        : order.status === OrderStatus.CANCELLED
+          ? 'order.cancelled'
+          : order.status === OrderStatus.PREPARING
+            ? 'order.sent_to_kitchen'
+            : 'order.updated';
+    this.realtime.emitOrderEvent(order.branchId, event, {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      total: order.total,
+    });
+    if (event !== 'order.updated') {
+      this.realtime.emitOrderEvent(order.branchId, 'order.updated', {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        total: order.total,
+      });
+    }
     return order;
   }
 

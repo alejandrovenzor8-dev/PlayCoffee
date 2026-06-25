@@ -2,41 +2,36 @@ import { io, Socket } from "socket.io-client";
 
 let socket: Socket | null = null;
 
-export function getSocket(branchId?: string): Socket {
-  const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3001";
+export type RealtimeStatus = "connected" | "reconnecting" | "disconnected";
+
+function getWsUrl() {
+  const value = process.env.NEXT_PUBLIC_WS_URL;
+  if (!value && process.env.NODE_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_WS_URL is required");
+  }
+  return value ?? "http://localhost:3001";
+}
+
+export function getSocket(): Socket {
+  const wsUrl = getWsUrl();
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
   if (!socket) {
-    socket = io(`${WS_URL}/orders`, {
+    socket = io(`${wsUrl}/realtime`, {
       autoConnect: false,
-      auth: {
-        token: typeof window !== "undefined" ? localStorage.getItem("accessToken") : null,
-      },
+      transports: ["websocket", "polling"],
+      auth: { token },
     });
-
-    socket.on("connect", () => {
-      console.log("[Socket] Connected:", socket?.id);
-      if (branchId) socket?.emit("joinBranch", branchId);
-    });
-
-    socket.on("disconnect", () => {
-      console.log("[Socket] Disconnected");
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("[Socket] Connection error:", err.message);
-    });
+  } else {
+    socket.auth = { token };
   }
 
-  if (!socket.connected) {
-    socket.connect();
-  }
-
+  if (!socket.connected) socket.connect();
   return socket;
 }
 
 export function disconnectSocket() {
-  if (socket?.connected) {
-    socket.disconnect();
-    socket = null;
-  }
+  socket?.disconnect();
+  socket = null;
 }

@@ -1,112 +1,296 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { reservationsApi } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { partyPackagesApi, reservationsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarDays, Check, Clock, Loader2, Phone, Plus, Users, X } from "lucide-react";
+import { useRealtime } from "@/hooks/useRealtime";
+import { RealtimeIndicator } from "@/components/realtime/realtime-indicator";
+import {
+  CalendarDays,
+  Check,
+  Clock,
+  Edit,
+  Loader2,
+  PackagePlus,
+  Plus,
+} from "lucide-react";
 
 type ReservationStatus = "PENDING" | "CONFIRMED" | "ARRIVED" | "CANCELLED" | "NO_SHOW" | "COMPLETED";
+type CalendarMode = "month" | "week" | "day";
+
+interface Area {
+  id: string;
+  name: string;
+}
+
+interface PartyPackage {
+  id: string;
+  name: string;
+  description?: string | null;
+  price: number;
+  duration: number;
+  maxGuests: number;
+  minDeposit?: number | null;
+  isActive: boolean;
+}
 
 interface Reservation {
   id: string;
-  branchId: string;
   contactName: string;
   contactPhone: string;
-  contactEmail?: string;
+  contactEmail?: string | null;
   reservedAt: string;
+  endTime?: string | null;
+  duration: number;
   partySize: number;
   status: ReservationStatus;
-  notes?: string;
-  table?: { number: string };
+  notes?: string | null;
+  area?: Area | null;
+  table?: { id: string; number: string; area?: Area } | null;
+  package?: PartyPackage | null;
+  packageId?: string | null;
+  areaId?: string | null;
+  depositAmount: number;
+  totalAmount: number;
 }
 
-const STATUS_CONFIG: Record<ReservationStatus, { label: string; badge: string }> = {
-  PENDING: { label: "Pendiente", badge: "bg-amber-100 text-amber-800 border-amber-300" },
-  CONFIRMED: { label: "Confirmada", badge: "bg-blue-100 text-blue-800 border-blue-300" },
-  ARRIVED: { label: "En mesa", badge: "bg-green-100 text-green-800 border-green-300" },
-  CANCELLED: { label: "Cancelada", badge: "bg-red-100 text-red-800 border-red-300" },
-  NO_SHOW: { label: "No se presento", badge: "bg-gray-100 text-gray-600 border-gray-300" },
-  COMPLETED: { label: "Completada", badge: "bg-emerald-100 text-emerald-800 border-emerald-300" },
+const statusConfig: Record<ReservationStatus, { label: string; badge: string; dot: string }> = {
+  PENDING: { label: "Pendiente", badge: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-500" },
+  CONFIRMED: { label: "Confirmada", badge: "bg-blue-50 text-blue-700 border-blue-200", dot: "bg-blue-500" },
+  ARRIVED: { label: "En salon", badge: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
+  CANCELLED: { label: "Cancelada", badge: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500" },
+  NO_SHOW: { label: "No asistio", badge: "bg-slate-50 text-slate-600 border-slate-200", dot: "bg-slate-400" },
+  COMPLETED: { label: "Completada", badge: "bg-green-50 text-green-700 border-green-200", dot: "bg-green-500" },
+};
+
+function toDateInput(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function toTimeInput(date: Date) {
+  return date.toTimeString().slice(0, 5);
+}
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function startOfWeek(date: Date) {
+  const next = new Date(date);
+  const day = next.getDay();
+  next.setDate(next.getDate() - day);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function sameDay(a: Date, b: Date) {
+  return a.toDateString() === b.toDateString();
+}
+
+const emptyReservationForm = {
+  contactName: "",
+  contactPhone: "",
+  contactEmail: "",
+  reservedDate: toDateInput(new Date()),
+  startTime: "12:00",
+  endTime: "14:00",
+  areaId: "none",
+  packageId: "none",
+  partySize: "10",
+  totalAmount: "0",
+  depositAmount: "0",
+  notes: "",
+};
+
+const emptyPackageForm = {
+  name: "",
+  description: "",
+  price: "0",
+  duration: "120",
+  maxGuests: "10",
+  minDeposit: "0",
 };
 
 export default function ReservationsPage() {
   const { user } = useAuthStore();
   const branchId = getActiveBranchId(user);
+  const canManageReservations = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" || user?.role === "CASHIER";
+  const canManagePackages = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [packages, setPackages] = useState<PartyPackage[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [form, setForm] = useState({
-    contactName: "",
-    contactPhone: "",
-    contactEmail: "",
-    reservedDate: "",
-    reservedTime: "",
-    partySize: "2",
-    notes: "",
-  });
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mode, setMode] = useState<CalendarMode>("week");
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [statusFilter, setStatusFilter] = useState<ReservationStatus | "ALL">("ALL");
+  const [reservationOpen, setReservationOpen] = useState(false);
+  const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
+  const [packageOpen, setPackageOpen] = useState(false);
+  const [editingPackage, setEditingPackage] = useState<PartyPackage | null>(null);
+  const [reservationForm, setReservationForm] = useState(emptyReservationForm);
+  const [packageForm, setPackageForm] = useState(emptyPackageForm);
 
-  const loadReservations = useCallback(() => {
+  const visibleDays = useMemo(() => {
+    if (mode === "day") return [selectedDate];
+    if (mode === "week") {
+      const start = startOfWeek(selectedDate);
+      return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+    }
+    const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const gridStart = startOfWeek(monthStart);
+    return Array.from({ length: 35 }, (_, index) => addDays(gridStart, index));
+  }, [mode, selectedDate]);
+
+  const loadData = useCallback(() => {
     setIsLoading(true);
     setLoadError(null);
-    reservationsApi.getAll({ branchId })
-      .then(setReservations)
+    const start = visibleDays[0].toISOString();
+    const end = addDays(visibleDays[visibleDays.length - 1], 1).toISOString();
+    Promise.all([
+      reservationsApi.calendar({ branchId, start, end }),
+      partyPackagesApi.getAll(true),
+      tablesApi.getAreas(branchId),
+    ])
+      .then(([reservationData, packageData, areaData]) => {
+        setReservations(reservationData);
+        setPackages(packageData);
+        setAreas(areaData);
+      })
       .catch(() => {
         setReservations([]);
-        setLoadError("No se pudieron cargar las reservaciones. Verifica que la API este disponible.");
+        setLoadError("No se pudieron cargar las reservas. Verifica la API y permisos.");
       })
       .finally(() => setIsLoading(false));
-  }, [branchId]);
+  }, [branchId, visibleDays]);
 
-  useEffect(() => { loadReservations(); }, [loadReservations]);
+  const realtimeEvents = useMemo(() => ({
+    "reservation.created": () => loadData(),
+    "reservation.updated": () => loadData(),
+    "reservation.cancelled": () => loadData(),
+  }), [loadData]);
+  const { status: realtimeStatus } = useRealtime(realtimeEvents);
 
-  const resetForm = () => {
-    setForm({
-      contactName: "",
-      contactPhone: "",
-      contactEmail: "",
-      reservedDate: "",
-      reservedTime: "",
-      partySize: "2",
-      notes: "",
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const filteredReservations = reservations.filter((reservation) =>
+    statusFilter === "ALL" ? true : reservation.status === statusFilter,
+  );
+
+  const totals = {
+    today: reservations.filter((reservation) => sameDay(new Date(reservation.reservedAt), new Date())).length,
+    confirmed: reservations.filter((reservation) => reservation.status === "CONFIRMED").length,
+    pending: reservations.filter((reservation) => reservation.status === "PENDING").length,
+    deposits: reservations.reduce((sum, reservation) => sum + Number(reservation.depositAmount ?? 0), 0),
+  };
+
+  const resetReservationForm = () => {
+    setEditingReservation(null);
+    setReservationForm(emptyReservationForm);
+  };
+
+  const openReservationForm = (reservation?: Reservation) => {
+    if (reservation) {
+      const start = new Date(reservation.reservedAt);
+      const end = reservation.endTime ? new Date(reservation.endTime) : new Date(start.getTime() + reservation.duration * 60000);
+      setEditingReservation(reservation);
+      setReservationForm({
+        contactName: reservation.contactName,
+        contactPhone: reservation.contactPhone,
+        contactEmail: reservation.contactEmail ?? "",
+        reservedDate: toDateInput(start),
+        startTime: toTimeInput(start),
+        endTime: toTimeInput(end),
+        areaId: reservation.areaId ?? reservation.area?.id ?? "none",
+        packageId: reservation.packageId ?? reservation.package?.id ?? "none",
+        partySize: String(reservation.partySize),
+        totalAmount: String(Number(reservation.totalAmount ?? 0)),
+        depositAmount: String(Number(reservation.depositAmount ?? 0)),
+        notes: reservation.notes ?? "",
+      });
+    } else {
+      resetReservationForm();
+    }
+    setReservationOpen(true);
+  };
+
+  const handlePackageChange = (packageId: string) => {
+    const selected = packages.find((item) => item.id === packageId);
+    setReservationForm((prev) => {
+      const start = new Date(`${prev.reservedDate}T${prev.startTime}`);
+      const end = selected ? new Date(start.getTime() + selected.duration * 60000) : new Date(`${prev.reservedDate}T${prev.endTime}`);
+      return {
+        ...prev,
+        packageId,
+        endTime: toTimeInput(end),
+        totalAmount: selected ? String(Number(selected.price)) : prev.totalAmount,
+        depositAmount: selected?.minDeposit ? String(Number(selected.minDeposit)) : prev.depositAmount,
+        partySize: selected ? String(selected.maxGuests) : prev.partySize,
+      };
     });
   };
 
-  const handleCreate = async () => {
+  const handleSaveReservation = async () => {
     setIsSubmitting(true);
     setLoadError(null);
-    const reservedAt = new Date(`${form.reservedDate}T${form.reservedTime}`).toISOString();
+    const payload = {
+      branchId,
+      contactName: reservationForm.contactName,
+      contactPhone: reservationForm.contactPhone,
+      contactEmail: reservationForm.contactEmail || undefined,
+      reservedAt: new Date(`${reservationForm.reservedDate}T${reservationForm.startTime}`).toISOString(),
+      endTime: new Date(`${reservationForm.reservedDate}T${reservationForm.endTime}`).toISOString(),
+      areaId: reservationForm.areaId === "none" ? undefined : reservationForm.areaId,
+      packageId: reservationForm.packageId === "none" ? undefined : reservationForm.packageId,
+      partySize: Number(reservationForm.partySize),
+      totalAmount: Number(reservationForm.totalAmount),
+      depositAmount: Number(reservationForm.depositAmount),
+      notes: reservationForm.notes || undefined,
+    };
     try {
-      await reservationsApi.create({
-        branchId,
-        contactName: form.contactName,
-        contactPhone: form.contactPhone,
-        contactEmail: form.contactEmail || undefined,
-        reservedAt,
-        partySize: Number(form.partySize),
-        notes: form.notes || undefined,
-      });
-      setFormOpen(false);
-      resetForm();
-      loadReservations();
+      if (editingReservation) {
+        await reservationsApi.update(editingReservation.id, payload);
+      } else {
+        await reservationsApi.create(payload);
+      }
+      setReservationOpen(false);
+      resetReservationForm();
+      loadData();
     } catch {
-      setLoadError("No se pudo crear la reservacion. Intenta de nuevo.");
+      setLoadError("No se pudo guardar la reserva. Revisa horarios, area, anticipo y paquete.");
     } finally {
       setIsSubmitting(false);
     }
@@ -115,31 +299,77 @@ export default function ReservationsPage() {
   const handleStatusChange = async (id: string, status: ReservationStatus) => {
     setLoadError(null);
     try {
-      const updated = await reservationsApi.updateStatus(id, status);
-      setReservations((prev) => prev.map((reservation) => reservation.id === id ? updated : reservation));
+      await reservationsApi.updateStatus(id, status);
+      loadData();
     } catch {
-      setLoadError("No se pudo actualizar la reservacion. Intenta de nuevo.");
+      setLoadError("No se pudo actualizar la reserva.");
     }
   };
 
-  const todayReservations = reservations.filter((reservation) => {
-    const date = new Date(reservation.reservedAt);
-    return date.toDateString() === new Date().toDateString();
-  });
-  const upcoming = reservations.filter((reservation) =>
-    new Date(reservation.reservedAt) > new Date() && !["CANCELLED", "NO_SHOW", "COMPLETED"].includes(reservation.status)
-  );
+  const openPackageForm = (partyPackage?: PartyPackage) => {
+    if (partyPackage) {
+      setEditingPackage(partyPackage);
+      setPackageForm({
+        name: partyPackage.name,
+        description: partyPackage.description ?? "",
+        price: String(Number(partyPackage.price)),
+        duration: String(partyPackage.duration),
+        maxGuests: String(partyPackage.maxGuests),
+        minDeposit: String(Number(partyPackage.minDeposit ?? 0)),
+      });
+    } else {
+      setEditingPackage(null);
+      setPackageForm(emptyPackageForm);
+    }
+    setPackageOpen(true);
+  };
+
+  const handleSavePackage = async () => {
+    setIsSubmitting(true);
+    setLoadError(null);
+    const payload = {
+      name: packageForm.name,
+      description: packageForm.description || undefined,
+      price: Number(packageForm.price),
+      duration: Number(packageForm.duration),
+      maxGuests: Number(packageForm.maxGuests),
+      minDeposit: Number(packageForm.minDeposit || 0),
+    };
+    try {
+      if (editingPackage) {
+        await partyPackagesApi.update(editingPackage.id, payload);
+      } else {
+        await partyPackagesApi.create(payload);
+      }
+      setPackageOpen(false);
+      loadData();
+    } catch {
+      setLoadError("No se pudo guardar el paquete. Revisa precio y anticipo minimo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const togglePackage = async (partyPackage: PartyPackage) => {
+    await partyPackagesApi.update(partyPackage.id, { isActive: !partyPackage.isActive });
+    loadData();
+  };
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Reservaciones"
-        description="Gestion de reservaciones y eventos"
+        description="Calendario de fiestas, salones, anticipos y paquetes"
         actions={
-          <Button onClick={() => setFormOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Nueva Reservacion
-          </Button>
+          canManageReservations ? (
+            <div className="flex items-center gap-2">
+              <RealtimeIndicator status={realtimeStatus} />
+              <Button onClick={() => openReservationForm()}>
+                <Plus className="mr-2 h-4 w-4" />
+                Nueva reserva
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
@@ -149,17 +379,17 @@ export default function ReservationsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: "Hoy", value: todayReservations.length, icon: CalendarDays, color: "text-blue-600 bg-blue-50" },
-          { label: "Proximas", value: upcoming.length, icon: Clock, color: "text-amber-600 bg-amber-50" },
-          { label: "Confirmadas", value: reservations.filter((r) => r.status === "CONFIRMED").length, icon: Check, color: "text-green-600 bg-green-50" },
-          { label: "Pendientes", value: reservations.filter((r) => r.status === "PENDING").length, icon: Clock, color: "text-orange-600 bg-orange-50" },
-        ].map(({ label, value, icon: Icon, color }) => (
+          { label: "Hoy", value: totals.today, icon: CalendarDays },
+          { label: "Confirmadas", value: totals.confirmed, icon: Check },
+          { label: "Pendientes", value: totals.pending, icon: Clock },
+          { label: "Anticipos", value: formatCurrency(totals.deposits), icon: PackagePlus },
+        ].map(({ label, value, icon: Icon }) => (
           <Card key={label}>
             <CardContent className="flex items-center gap-3 p-4">
-              <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", color.split(" ")[1])}>
-                <Icon className={cn("h-5 w-5", color.split(" ")[0])} />
+              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-blue-50">
+                <Icon className="h-5 w-5 text-blue-600" />
               </div>
               <div>
                 <p className="text-xl font-bold">{value}</p>
@@ -170,122 +400,220 @@ export default function ReservationsPage() {
         ))}
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      ) : reservations.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center py-12 text-center text-muted-foreground">
-            <CalendarDays className="mb-3 h-12 w-12 opacity-30" />
-            <p>No hay reservaciones registradas</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {reservations.map((reservation) => {
-            const { label, badge } = STATUS_CONFIG[reservation.status];
-            const isPast = new Date(reservation.reservedAt) < new Date();
-            return (
-              <Card key={reservation.id} className={cn("overflow-hidden", isPast && reservation.status === "PENDING" && "opacity-60")}>
-                <CardContent className="p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold">{reservation.contactName}</p>
-                        <Badge className={cn("border text-xs", badge)} variant="outline">{label}</Badge>
-                        {reservation.table && <Badge variant="secondary" className="text-xs">Mesa {reservation.table.number}</Badge>}
-                      </div>
-                      <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />{formatDate(reservation.reservedAt)}</span>
-                        <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{reservation.partySize} personas</span>
-                        <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{reservation.contactPhone}</span>
-                      </div>
-                      {reservation.notes && <p className="text-xs italic text-muted-foreground">&quot;{reservation.notes}&quot;</p>}
-                    </div>
+      <Tabs defaultValue="calendar" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="calendar">Calendario</TabsTrigger>
+          <TabsTrigger value="packages">Paquetes</TabsTrigger>
+        </TabsList>
 
-                    <div className="flex flex-wrap gap-1.5">
-                      {reservation.status === "PENDING" && (
-                        <Button size="sm" variant="outline" className="text-green-700 hover:bg-green-50" onClick={() => handleStatusChange(reservation.id, "CONFIRMED")}>
-                          <Check className="mr-1 h-3.5 w-3.5" />Confirmar
-                        </Button>
-                      )}
-                      {reservation.status === "CONFIRMED" && (
-                        <Button size="sm" variant="outline" onClick={() => handleStatusChange(reservation.id, "ARRIVED")}>
-                          Sentar
-                        </Button>
-                      )}
-                      {reservation.status === "ARRIVED" && (
-                        <Button size="sm" variant="outline" onClick={() => handleStatusChange(reservation.id, "COMPLETED")}>
-                          Completar
-                        </Button>
-                      )}
-                      {(reservation.status === "PENDING" || reservation.status === "CONFIRMED") && (
-                        <Button size="sm" variant="outline" className="text-red-700 hover:bg-red-50" onClick={() => handleStatusChange(reservation.id, "CANCELLED")}>
-                          <X className="mr-1 h-3.5 w-3.5" />Cancelar
-                        </Button>
-                      )}
+        <TabsContent value="calendar" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSelectedDate(addDays(selectedDate, mode === "month" ? -30 : mode === "week" ? -7 : -1))}>Anterior</Button>
+              <Button variant="outline" size="sm" onClick={() => setSelectedDate(new Date())}>Hoy</Button>
+              <Button variant="outline" size="sm" onClick={() => setSelectedDate(addDays(selectedDate, mode === "month" ? 30 : mode === "week" ? 7 : 1))}>Siguiente</Button>
+            </div>
+            <div className="flex gap-2">
+              <Select value={statusFilter} onValueChange={(value: ReservationStatus | "ALL") => setStatusFilter(value)}>
+                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">Todos</SelectItem>
+                  {Object.entries(statusConfig).map(([value, config]) => (
+                    <SelectItem key={value} value={value}>{config.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={mode} onValueChange={(value: CalendarMode) => setMode(value)}>
+                <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">Dia</SelectItem>
+                  <SelectItem value="week">Semana</SelectItem>
+                  <SelectItem value="month">Mes</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className={cn("grid gap-3", mode === "day" ? "grid-cols-1" : "grid-cols-1 md:grid-cols-7")}>
+              {visibleDays.map((day) => {
+                const dayReservations = filteredReservations.filter((reservation) => sameDay(new Date(reservation.reservedAt), day));
+                return (
+                  <Card key={day.toISOString()} className={cn(!sameDay(day, selectedDate) && mode === "month" && day.getMonth() !== selectedDate.getMonth() && "opacity-50")}>
+                    <CardContent className="min-h-40 p-3">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-medium uppercase text-muted-foreground">{day.toLocaleDateString("es-MX", { weekday: "short" })}</p>
+                          <p className="text-lg font-bold">{day.getDate()}</p>
+                        </div>
+                        {sameDay(day, new Date()) && <Badge variant="secondary">Hoy</Badge>}
+                      </div>
+                      <div className="space-y-2">
+                        {dayReservations.map((reservation) => {
+                          const config = statusConfig[reservation.status];
+                          const balance = Number(reservation.totalAmount ?? 0) - Number(reservation.depositAmount ?? 0);
+                          return (
+                            <button
+                              key={reservation.id}
+                              className="w-full rounded-md border bg-background p-2 text-left text-xs transition hover:border-blue-300 hover:bg-blue-50"
+                              onClick={() => openReservationForm(reservation)}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={cn("h-2 w-2 rounded-full", config.dot)} />
+                                <span className="font-semibold">{formatTime(reservation.reservedAt)}</span>
+                                <span className="truncate">{reservation.contactName}</span>
+                              </div>
+                              <div className="mt-1 text-muted-foreground">
+                                {reservation.area?.name ?? "Sin area"} · {reservation.partySize} ninos
+                              </div>
+                              <div className="mt-1 flex justify-between">
+                                <span>{reservation.package?.name ?? "Sin paquete"}</span>
+                                <span>{formatCurrency(balance)}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="packages" className="space-y-4">
+          <div className="flex justify-end">
+            {canManagePackages && (
+              <Button onClick={() => openPackageForm()}>
+                <PackagePlus className="mr-2 h-4 w-4" />
+                Nuevo paquete
+              </Button>
+            )}
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {packages.map((partyPackage) => (
+              <Card key={partyPackage.id}>
+                <CardContent className="space-y-4 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">{partyPackage.name}</p>
+                      <p className="text-sm text-muted-foreground">{partyPackage.description ?? "Sin descripcion"}</p>
                     </div>
+                    <Badge variant="outline" className={partyPackage.isActive ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                      {partyPackage.isActive ? "Activo" : "Inactivo"}
+                    </Badge>
                   </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-md bg-muted p-2"><p className="text-muted-foreground">Precio</p><p className="font-bold">{formatCurrency(partyPackage.price)}</p></div>
+                    <div className="rounded-md bg-muted p-2"><p className="text-muted-foreground">Duracion</p><p className="font-bold">{partyPackage.duration} min</p></div>
+                    <div className="rounded-md bg-muted p-2"><p className="text-muted-foreground">Limite</p><p className="font-bold">{partyPackage.maxGuests} ninos</p></div>
+                    <div className="rounded-md bg-muted p-2"><p className="text-muted-foreground">Anticipo</p><p className="font-bold">{formatCurrency(partyPackage.minDeposit ?? 0)}</p></div>
+                  </div>
+                  {canManagePackages && (
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" className="flex-1" onClick={() => openPackageForm(partyPackage)}>
+                        <Edit className="mr-1 h-3.5 w-3.5" />
+                        Editar
+                      </Button>
+                      <Button variant="outline" size="sm" className="flex-1" onClick={() => togglePackage(partyPackage)}>
+                        {partyPackage.isActive ? "Desactivar" : "Activar"}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
-            );
-          })}
-        </div>
-      )}
+            ))}
+          </div>
+        </TabsContent>
+      </Tabs>
 
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Nueva Reservacion</DialogTitle></DialogHeader>
-          <div className="grid gap-3 py-4">
-            <div className="space-y-1.5">
-              <Label>Nombre del cliente *</Label>
-              <Input value={form.contactName} onChange={(event) => setForm((prev) => ({ ...prev, contactName: event.target.value }))} />
+      <Dialog open={reservationOpen} onOpenChange={(open) => {
+        setReservationOpen(open);
+        if (!open) resetReservationForm();
+      }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>{editingReservation ? "Editar reserva" : "Nueva reserva"}</DialogTitle></DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5"><Label>Responsable</Label><Input value={reservationForm.contactName} onChange={(event) => setReservationForm((prev) => ({ ...prev, contactName: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Telefono</Label><Input value={reservationForm.contactPhone} onChange={(event) => setReservationForm((prev) => ({ ...prev, contactPhone: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Email</Label><Input type="email" value={reservationForm.contactEmail} onChange={(event) => setReservationForm((prev) => ({ ...prev, contactEmail: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Ninos estimados</Label><Input type="number" min={0} value={reservationForm.partySize} onChange={(event) => setReservationForm((prev) => ({ ...prev, partySize: event.target.value }))} /></div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5"><Label>Fecha</Label><Input type="date" value={reservationForm.reservedDate} onChange={(event) => setReservationForm((prev) => ({ ...prev, reservedDate: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Inicio</Label><Input type="time" value={reservationForm.startTime} onChange={(event) => setReservationForm((prev) => ({ ...prev, startTime: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Fin</Label><Input type="time" value={reservationForm.endTime} onChange={(event) => setReservationForm((prev) => ({ ...prev, endTime: event.target.value }))} /></div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Telefono *</Label>
-                <Input value={form.contactPhone} onChange={(event) => setForm((prev) => ({ ...prev, contactPhone: event.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Personas *</Label>
-                <Select value={form.partySize} onValueChange={(value) => setForm((prev) => ({ ...prev, partySize: value }))}>
+                <Label>Area / salon</Label>
+                <Select value={reservationForm.areaId} onValueChange={(value) => setReservationForm((prev) => ({ ...prev, areaId: value }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20].map((n) => (
-                      <SelectItem key={n} value={String(n)}>{n} personas</SelectItem>
-                    ))}
+                    <SelectItem value="none">Sin area</SelectItem>
+                    {areas.map((area) => <SelectItem key={area.id} value={area.id}>{area.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Paquete</Label>
+                <Select value={reservationForm.packageId} onValueChange={handlePackageChange}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin paquete</SelectItem>
+                    {packages.filter((item) => item.isActive).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input type="email" value={form.contactEmail} onChange={(event) => setForm((prev) => ({ ...prev, contactEmail: event.target.value }))} />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5"><Label>Total</Label><Input type="number" min={0} value={reservationForm.totalAmount} onChange={(event) => setReservationForm((prev) => ({ ...prev, totalAmount: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Anticipo</Label><Input type="number" min={0} value={reservationForm.depositAmount} onChange={(event) => setReservationForm((prev) => ({ ...prev, depositAmount: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Saldo</Label><div className="flex h-10 items-center rounded-md border bg-muted px-3 text-sm font-semibold">{formatCurrency(Math.max(0, Number(reservationForm.totalAmount || 0) - Number(reservationForm.depositAmount || 0)))}</div></div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Fecha *</Label>
-                <Input type="date" value={form.reservedDate} onChange={(event) => setForm((prev) => ({ ...prev, reservedDate: event.target.value }))} />
+            <div className="space-y-1.5"><Label>Notas</Label><Textarea value={reservationForm.notes} onChange={(event) => setReservationForm((prev) => ({ ...prev, notes: event.target.value }))} /></div>
+            {editingReservation && (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => handleStatusChange(editingReservation.id, "CONFIRMED")}>Confirmar</Button>
+                <Button size="sm" variant="outline" onClick={() => handleStatusChange(editingReservation.id, "COMPLETED")}>Completar</Button>
+                <Button size="sm" variant="outline" className="text-red-700" onClick={() => handleStatusChange(editingReservation.id, "CANCELLED")}>Cancelar</Button>
               </div>
-              <div className="space-y-1.5">
-                <Label>Hora *</Label>
-                <Input type="time" value={form.reservedTime} onChange={(event) => setForm((prev) => ({ ...prev, reservedTime: event.target.value }))} />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notas</Label>
-              <Textarea value={form.notes} onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))} />
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReservationOpen(false)}>Cerrar</Button>
+            <Button onClick={handleSaveReservation} disabled={!reservationForm.contactName || !reservationForm.contactPhone || !reservationForm.reservedDate || !reservationForm.startTime || isSubmitting}>
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={packageOpen} onOpenChange={setPackageOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>{editingPackage ? "Editar paquete" : "Nuevo paquete"}</DialogTitle></DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1.5"><Label>Nombre</Label><Input value={packageForm.name} onChange={(event) => setPackageForm((prev) => ({ ...prev, name: event.target.value }))} /></div>
+            <div className="space-y-1.5"><Label>Descripcion</Label><Textarea value={packageForm.description} onChange={(event) => setPackageForm((prev) => ({ ...prev, description: event.target.value }))} /></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5"><Label>Precio</Label><Input type="number" min={0} value={packageForm.price} onChange={(event) => setPackageForm((prev) => ({ ...prev, price: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Duracion fija</Label><Input type="number" min={30} value={packageForm.duration} onChange={(event) => setPackageForm((prev) => ({ ...prev, duration: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Limite de ninos</Label><Input type="number" min={1} value={packageForm.maxGuests} onChange={(event) => setPackageForm((prev) => ({ ...prev, maxGuests: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Anticipo minimo</Label><Input type="number" min={0} value={packageForm.minDeposit} onChange={(event) => setPackageForm((prev) => ({ ...prev, minDeposit: event.target.value }))} /></div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>Cancelar</Button>
-            <Button
-              onClick={handleCreate}
-              disabled={!form.contactName || !form.contactPhone || !form.reservedDate || !form.reservedTime || isSubmitting}
-            >
+            <Button variant="outline" onClick={() => setPackageOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSavePackage} disabled={!packageForm.name || isSubmitting}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Crear Reservacion
+              Guardar paquete
             </Button>
           </DialogFooter>
         </DialogContent>

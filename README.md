@@ -103,3 +103,7 @@ PlayCoffee/
 - **Frontend**: Next.js 16, React 19, TailwindCSS, Zustand
 - **Backend**: NestJS, Prisma, PostgreSQL, Socket.io
 - **Monorepo**: Turborepo + pnpm workspaces
+
+## Deploy en Railway
+
+La guia de produccion esta en [DEPLOY.md](DEPLOY.md). Incluye variables, Dockerfiles por servicio, migraciones Prisma, healthcheck, Socket.io y checklist post-deploy.

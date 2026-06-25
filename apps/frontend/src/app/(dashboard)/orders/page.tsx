@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ordersApi, printApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useOrdersStore } from "@/store/orders.store";
@@ -26,6 +26,8 @@ import {
   ChevronRight,
   Loader2,
 } from "lucide-react";
+import { useRealtime } from "@/hooks/useRealtime";
+import { RealtimeIndicator } from "@/components/realtime/realtime-indicator";
 
 const STATUS_CONFIG: Record<OrderStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" }> = {
   PENDING: { label: "Pendiente", variant: "warning" },
@@ -54,7 +56,7 @@ export default function OrdersPage() {
   const [printOpen, setPrintOpen] = useState(false);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
 
-  const loadOrders = () => {
+  const loadOrders = useCallback(() => {
     setLoading(true);
     setLoadError(null);
     ordersApi.getAll({ branchId })
@@ -64,9 +66,20 @@ export default function OrdersPage() {
         setLoadError("No se pudieron cargar las ordenes. Verifica que la API este disponible.");
       })
       .finally(() => setLoading(false));
-  };
+  }, [branchId, setLoading, setOrders]);
 
-  useEffect(() => { loadOrders(); }, [branchId]);
+  const realtimeEvents = useMemo(() => ({
+    "order.created": () => loadOrders(),
+    "order.updated": () => loadOrders(),
+    "order.sent_to_kitchen": () => loadOrders(),
+    "order.completed": () => loadOrders(),
+    "order.cancelled": () => loadOrders(),
+    "payment.created": () => loadOrders(),
+    "order.payment_status.changed": () => loadOrders(),
+  }), [loadOrders]);
+  const { status: realtimeStatus } = useRealtime(realtimeEvents);
+
+  useEffect(() => { loadOrders(); }, [loadOrders]);
 
   const filteredOrders = (statuses: OrderStatus[]) =>
     orders.filter((o) => statuses.includes(o.status));
@@ -126,10 +139,13 @@ export default function OrdersPage() {
         title="Comandero"
         description="Gestión de órdenes en tiempo real"
         actions={
-          <Button variant="outline" size="sm" onClick={loadOrders}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Actualizar
-          </Button>
+          <div className="flex items-center gap-2">
+            <RealtimeIndicator status={realtimeStatus} />
+            <Button variant="outline" size="sm" onClick={loadOrders}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Actualizar
+            </Button>
+          </div>
         }
       />
 

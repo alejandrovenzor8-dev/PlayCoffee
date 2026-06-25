@@ -8,12 +8,14 @@ import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { TableStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 @Injectable()
 export class TablesService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private realtime: RealtimeGateway,
   ) {}
 
   async findAll(branchId?: string, areaId?: string) {
@@ -79,10 +81,15 @@ export class TablesService {
 
   async create(dto: CreateTableDto, branchId?: string) {
     await this.assertAreaInBranch(dto.areaId, branchId);
-    return this.prisma.restaurantTable.create({
+    const table = await this.prisma.restaurantTable.create({
       data: dto,
       include: { area: true },
     });
+    this.realtime.emitTableUpdated(table.area.branchId, {
+      id: table.id,
+      status: table.status,
+    });
+    return table;
   }
 
   async update(id: string, dto: UpdateTableDto, branchId?: string) {
@@ -90,11 +97,27 @@ export class TablesService {
     if (dto.areaId) {
       await this.assertAreaInBranch(dto.areaId, branchId);
     }
-    return this.prisma.restaurantTable.update({
+    const table = await this.prisma.restaurantTable.update({
       where: { id },
       data: dto,
       include: { area: true },
     });
+    this.realtime.emitTableUpdated(table.area.branchId, {
+      id: table.id,
+      status: table.status,
+    });
+    if (
+      dto.posX !== undefined ||
+      dto.posY !== undefined ||
+      dto.width !== undefined ||
+      dto.height !== undefined ||
+      dto.rotation !== undefined
+    ) {
+      this.realtime.emitToBranch(table.area.branchId, 'table.layout.updated', {
+        id: table.id,
+      });
+    }
+    return table;
   }
 
   async updateStatus(
@@ -123,14 +146,25 @@ export class TablesService {
       },
     });
 
+    this.realtime.emitTableStatusChanged(updatedTable.area.branchId, {
+      id: updatedTable.id,
+      status: updatedTable.status,
+    });
+
     return updatedTable;
   }
 
   async remove(id: string, branchId?: string) {
     await this.findOne(id, branchId);
-    return this.prisma.restaurantTable.update({
+    const table = await this.prisma.restaurantTable.update({
       where: { id },
       data: { deletedAt: new Date() },
+      include: { area: true },
     });
+    this.realtime.emitTableUpdated(table.area.branchId, {
+      id: table.id,
+      status: table.status,
+    });
+    return table;
   }
 }

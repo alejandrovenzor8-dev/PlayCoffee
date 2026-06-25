@@ -1,7 +1,15 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/store/auth.store";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+function getRequiredPublicUrl(name: "NEXT_PUBLIC_API_URL" | "NEXT_PUBLIC_WS_URL") {
+  const value = process.env[name];
+  if (!value && process.env.NODE_ENV === "production") {
+    throw new Error(`${name} is required`);
+  }
+  return value ?? "http://localhost:3001";
+}
+
+const BASE_URL = getRequiredPublicUrl("NEXT_PUBLIC_API_URL");
 let refreshPromise: Promise<string | null> | null = null;
 
 function clearClientAuth() {
@@ -104,10 +112,31 @@ export const authApi = {
     api.post("/auth/refresh", { refreshToken }).then((r) => r.data.data),
 };
 
+export type ProductPayload = {
+  categoryId?: string;
+  name: string;
+  description?: string;
+  price: number;
+  cost?: number;
+  imageUrl?: string;
+  sku?: string;
+  barcode?: string;
+  taxRate?: number;
+  preparationStation?: "KITCHEN" | "BAR" | "NONE";
+  trackInventory?: boolean;
+  isFeatured?: boolean;
+  isActive?: boolean;
+};
+
 export const productsApi = {
-  getAll: (params?: { categoryId?: string; search?: string }) =>
+  getAll: (params?: { categoryId?: string; search?: string; isActive?: string }) =>
     api.get("/products", { params }).then((r) => r.data.data),
   getCategories: () => api.get("/products/categories").then((r) => r.data.data),
+  create: (data: ProductPayload) =>
+    api.post("/products", data).then((r) => r.data.data),
+  update: (id: string, data: Partial<ProductPayload>) =>
+    api.patch(`/products/${id}`, data).then((r) => r.data.data),
+  delete: (id: string) => api.delete(`/products/${id}`).then((r) => r.data.data),
 };
 
 export const ordersApi = {
@@ -192,16 +221,31 @@ export const childAccessApi = {
   getOverstaying: (branchId?: string) =>
     api.get("/child-access/overstaying", { params: { branchId } }).then((r) => r.data.data),
   register: (data: unknown) => api.post("/child-access", data).then((r) => r.data.data),
-  checkout: (id: string, branchId?: string) =>
-    api.patch(`/child-access/${id}/checkout`, undefined, { params: { branchId } }).then((r) => r.data.data),
+  checkout: (id: string, data: unknown, branchId?: string) =>
+    api.patch(`/child-access/${id}/checkout`, data, { params: { branchId } }).then((r) => r.data.data),
 };
 
 export const reservationsApi = {
   getAll: (params?: { branchId?: string; date?: string }) =>
     api.get("/reservations", { params }).then((r) => r.data.data),
+  calendar: (params?: { branchId?: string; start?: string; end?: string }) =>
+    api.get("/reservations/calendar", { params }).then((r) => r.data.data),
+  availability: (params: { branchId?: string; date: string; areaId?: string; duration?: number }) =>
+    api.get("/reservations/availability", { params }).then((r) => r.data.data),
   create: (data: unknown) => api.post("/reservations", data).then((r) => r.data.data),
+  update: (id: string, data: unknown) =>
+    api.patch(`/reservations/${id}`, data).then((r) => r.data.data),
   updateStatus: (id: string, status: string) =>
     api.patch(`/reservations/${id}/status`, { status }).then((r) => r.data.data),
+};
+
+export const partyPackagesApi = {
+  getAll: (includeInactive = false) =>
+    api.get("/party-packages", { params: { includeInactive } }).then((r) => r.data.data),
+  create: (data: unknown) => api.post("/party-packages", data).then((r) => r.data.data),
+  update: (id: string, data: unknown) =>
+    api.patch(`/party-packages/${id}`, data).then((r) => r.data.data),
+  delete: (id: string) => api.delete(`/party-packages/${id}`).then((r) => r.data.data),
 };
 
 export const reportsApi = {
@@ -209,8 +253,26 @@ export const reportsApi = {
     api.get("/reports/kpis", { params: { branchId } }).then((r) => r.data.data),
   getSales: (branchId: string, from: string, to: string) =>
     api.get("/reports/sales", { params: { branchId, from, to } }).then((r) => r.data.data),
-  getSummary: (params: { from?: string; to?: string; branchId?: string }) =>
+  getSummary: (params: { start?: string; end?: string; from?: string; to?: string; branchId?: string }) =>
     api.get("/reports/summary", { params }).then((r) => r.data.data),
+  salesByDay: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/sales-by-day", { params }).then((r) => r.data.data),
+  salesByCategory: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/sales-by-category", { params }).then((r) => r.data.data),
+  paymentMethods: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/payment-methods", { params }).then((r) => r.data.data),
+  peakHours: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/peak-hours", { params }).then((r) => r.data.data),
+  waiterSales: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/waiter-sales", { params }).then((r) => r.data.data),
+  childAccess: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/child-access", { params }).then((r) => r.data.data),
+  reservations: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/reservations", { params }).then((r) => r.data.data),
+  inventoryLowStock: (branchId?: string) =>
+    api.get("/reports/inventory-low-stock", { params: { branchId } }).then((r) => r.data.data),
+  cashShifts: (params: { start?: string; end?: string; branchId?: string }) =>
+    api.get("/reports/cash-shifts", { params }).then((r) => r.data.data),
 };
 
 export const inventoryApi = {
@@ -218,9 +280,13 @@ export const inventoryApi = {
     api.get("/inventory", { params: { search, branchId } }).then((r) => r.data.data),
   getItems: (branchId?: string) =>
     api.get("/inventory", { params: { branchId } }).then((r) => r.data.data),
+  getLowStock: (branchId?: string) =>
+    api.get("/inventory/low-stock", { params: { branchId } }).then((r) => r.data.data),
   getMovements: (params?: { itemId?: string; branchId?: string }) =>
     api.get("/inventory/movements", { params }).then((r) => r.data.data),
-  create: (data: unknown) => api.post("/inventory", data).then((r) => r.data.data),
+  create: (data: unknown) => api.post("/inventory/items", data).then((r) => r.data.data),
+  update: (id: string, data: unknown) =>
+    api.patch(`/inventory/items/${id}`, data).then((r) => r.data.data),
   addMovement: (data: unknown) =>
     api.post("/inventory/movements", data).then((r) => r.data.data),
   recordMovement: (data: unknown) =>

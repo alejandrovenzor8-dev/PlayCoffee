@@ -24,4 +24,4 @@ COPY --from=builder /app /app
 
 EXPOSE 3001
 
-CMD ["pnpm", "--dir", "apps/backend", "run", "start:prod"]
+CMD ["sh", "-c", "pnpm --dir apps/backend exec prisma migrate deploy && pnpm --dir apps/backend run start:prod"]

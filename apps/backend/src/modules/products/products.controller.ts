@@ -29,11 +29,19 @@ export class ProductsController {
   @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
   @ApiQuery({ name: 'categoryId', required: false })
   @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'isActive', required: false })
   findAll(
     @Query('categoryId') categoryId?: string,
     @Query('search') search?: string,
+    @Query('isActive') isActive?: string,
   ) {
-    return this.productsService.findAll(categoryId, search);
+    const activeFilter =
+      isActive === 'all'
+        ? null
+        : isActive === undefined
+          ? undefined
+          : isActive === 'true';
+    return this.productsService.findAll(categoryId, search, activeFilter);
   }
 
   @Get('categories')

@@ -31,9 +31,40 @@ export class CreateInventoryItemDto {
 
 export class InventoryMovementDto {
   @ApiPropertyOptional() @IsString() @IsOptional() branchId?: string;
-  @ApiProperty() @IsString() inventoryItemId: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() inventoryItemId?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() productId?: string;
   @ApiProperty({ enum: MovementType }) @IsEnum(MovementType) type: MovementType;
   @ApiProperty() @IsNumber() @Min(0.001) @Type(() => Number) quantity: number;
+  @ApiPropertyOptional() @IsString() @IsOptional() reason?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() notes?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() reference?: string;
+}
+
+export class UpdateInventoryItemDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() name?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() unit?: string;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  currentStock?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  minStock?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  maxStock?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  costPerUnit?: number;
 }

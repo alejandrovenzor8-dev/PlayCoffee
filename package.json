@@ -9,6 +9,7 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:preprod": "pnpm lint && pnpm build && pnpm db:generate && pnpm --filter backend exec prisma validate",
     "db:generate": "cd apps/backend && npx prisma generate",
     "db:migrate": "cd apps/backend && npx prisma migrate dev",
     "db:migrate:deploy": "cd apps/backend && npx prisma migrate deploy",

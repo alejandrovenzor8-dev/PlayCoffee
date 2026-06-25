@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
@@ -22,6 +22,8 @@ import {
   ArrowRightLeft,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
+import { useRealtime } from "@/hooks/useRealtime";
+import { RealtimeIndicator } from "@/components/realtime/realtime-indicator";
 
 type PaymentMethod = "CASH" | "CARD" | "TRANSFER";
 type PaymentSummary = {
@@ -43,6 +45,7 @@ type PosPayment = {
 type PosOrder = {
   id: string;
   orderNumber: string;
+  total?: number;
 };
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -50,6 +53,12 @@ const paymentLabels: Record<PaymentMethod, string> = {
   CARD: "Tarjeta",
   TRANSFER: "Transferencia",
 };
+
+const preparationStationLabels = {
+  NONE: "Sin impresion especial",
+  KITCHEN: "Cocina",
+  BAR: "Barra",
+} as const;
 
 export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -70,12 +79,18 @@ export default function PosPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [linkedOrderId, setLinkedOrderId] = useState<string | null>(null);
 
   const cart = useCartStore();
   const { user } = useAuthStore();
   const branchId = getActiveBranchId(user);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setLinkedOrderId(params.get("orderId"));
+  }, []);
+
+  const loadOperationalData = useCallback(() => {
     setIsLoading(true);
     setLoadError(null);
     Promise.all([
@@ -97,14 +112,70 @@ export default function PosPage() {
       .finally(() => setIsLoading(false));
   }, [branchId]);
 
+  const refreshCurrentOrderPayments = useCallback(() => {
+    if (!currentOrder?.id) return;
+    paymentsApi.getByOrder(currentOrder.id)
+      .then((paymentInfo) => {
+        setPayments(paymentInfo.payments ?? []);
+        setPaymentSummary(paymentInfo.summary);
+      })
+      .catch(() => undefined);
+  }, [currentOrder]);
+
+  const realtimeEvents = useMemo(() => ({
+    "table.updated": () => loadOperationalData(),
+    "table.status.changed": () => loadOperationalData(),
+    "order.created": () => loadOperationalData(),
+    "order.updated": () => refreshCurrentOrderPayments(),
+    "order.completed": () => {
+      loadOperationalData();
+      refreshCurrentOrderPayments();
+    },
+    "order.cancelled": () => {
+      loadOperationalData();
+      refreshCurrentOrderPayments();
+    },
+    "payment.created": () => refreshCurrentOrderPayments(),
+    "order.payment_status.changed": () => refreshCurrentOrderPayments(),
+  }), [loadOperationalData, refreshCurrentOrderPayments]);
+  const { status: realtimeStatus } = useRealtime(realtimeEvents);
+
+  useEffect(() => {
+    loadOperationalData();
+  }, [loadOperationalData]);
+
+  useEffect(() => {
+    if (!linkedOrderId) return;
+    setIsProcessing(true);
+    Promise.all([
+      ordersApi.getOne(linkedOrderId),
+      paymentsApi.getByOrder(linkedOrderId),
+    ])
+      .then(([order, paymentInfo]) => {
+        setCurrentOrder({
+          id: order.id,
+          orderNumber: order.orderNumber,
+          total: Number(order.total),
+        });
+        setPayments(paymentInfo.payments ?? []);
+        setPaymentSummary(paymentInfo.summary);
+        setPaymentOpen(paymentInfo.summary?.paymentStatus !== "PAID");
+      })
+      .catch(() => {
+        setPaymentError("No se pudo cargar el ticket solicitado.");
+      })
+      .finally(() => setIsProcessing(false));
+  }, [linkedOrderId]);
+
   const availableTables = tables.filter((table) =>
     ["AVAILABLE", "RESERVED"].includes(table.status)
   );
 
   const selectedTable = tables.find((table) => table.id === cart.tableId);
   const cartTotal = cart.total();
+  const payableTotal = paymentSummary?.total ?? currentOrder?.total ?? cartTotal;
   const paidAmount = paymentSummary?.totalPaid ?? 0;
-  const remainingAmount = paymentSummary?.remainingAmount ?? cartTotal;
+  const remainingAmount = paymentSummary?.remainingAmount ?? payableTotal;
   const cashReceived = Number(receivedAmount || 0);
   const cashChange =
     paymentMethod === "CASH" ? Math.max(0, cashReceived - remainingAmount) : 0;
@@ -116,8 +187,8 @@ export default function PosPage() {
   });
 
   const ensureOrder = async () => {
-    if (cart.items.length === 0) return;
     if (currentOrder) return currentOrder;
+    if (cart.items.length === 0) return;
 
     const orderData = {
       branchId,
@@ -156,7 +227,7 @@ export default function PosPage() {
   };
 
   const handleAddPayment = async () => {
-    if (cart.items.length === 0 || remainingAmount <= 0) return;
+    if ((!currentOrder && cart.items.length === 0) || remainingAmount <= 0) return;
     setIsProcessing(true);
     setPaymentError(null);
     try {
@@ -222,7 +293,11 @@ export default function PosPage() {
     <div className="flex h-[calc(100vh-4rem)] gap-4 -m-6 p-6">
       {/* Product panel */}
       <div className="flex flex-1 flex-col min-w-0">
-        <PageHeader title="Caja / POS" description="Registra órdenes y procesa pagos" />
+        <PageHeader
+          title="Caja / POS"
+          description="Registra órdenes y procesa pagos"
+          actions={<RealtimeIndicator status={realtimeStatus} />}
+        />
 
         {successMsg && (
           <div className="mb-4 rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-700 flex items-center gap-2">
@@ -295,6 +370,9 @@ export default function PosPage() {
                     Popular
                   </Badge>
                 )}
+                <Badge variant="secondary" className="absolute bottom-2 right-2 h-5 text-[10px]">
+                  {preparationStationLabels[product.preparationStation ?? "NONE"]}
+                </Badge>
                 <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-50 text-2xl mb-3">
                   ☕
                 </div>
@@ -440,7 +518,7 @@ export default function PosPage() {
           <div className="space-y-4 py-4">
             <div className="rounded-lg bg-muted p-4 text-center">
               <p className="text-sm text-muted-foreground">Total a cobrar</p>
-              <p className="text-4xl font-bold mt-1 text-blue-600">{formatCurrency(cartTotal)}</p>
+              <p className="text-4xl font-bold mt-1 text-blue-600">{formatCurrency(payableTotal)}</p>
               <div className="mt-4 grid grid-cols-2 gap-2 text-left">
                 <div className="rounded-lg border bg-background p-3">
                   <p className="text-xs text-muted-foreground">Pagado</p>

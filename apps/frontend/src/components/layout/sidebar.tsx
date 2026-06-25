@@ -17,6 +17,7 @@ import {
   BarChart3,
   Settings,
   Coffee,
+  Tags,
   WalletCards,
   LogOut,
   ChevronRight,
@@ -26,9 +27,10 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/pos", label: "Caja / POS", icon: ShoppingCart },
   { href: "/cash", label: "Corte de Caja", icon: WalletCards },
+  { href: "/products", label: "Catalogo", icon: Tags, roles: ["SUPER_ADMIN", "ADMIN", "CASHIER"] },
   { href: "/tables", label: "Mesas", icon: Table2 },
   { href: "/orders", label: "Comandero", icon: ClipboardList },
-  { href: "/children", label: "Control Infantil", icon: Baby },
+  { href: "/child-access", label: "Control Infantil", icon: Baby },
   { href: "/reservations", label: "Reservas", icon: CalendarDays },
   { href: "/inventory", label: "Inventario", icon: Package },
   { href: "/reports", label: "Reportes", icon: BarChart3 },
@@ -67,7 +69,9 @@ export function Sidebar() {
         <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider opacity-40">
           Menú Principal
         </p>
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {navItems
+          .filter((item) => !item.roles || item.roles.includes(user?.role ?? ""))
+          .map(({ href, label, icon: Icon }) => {
           const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <Link

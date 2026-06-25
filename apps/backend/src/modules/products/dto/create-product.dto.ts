@@ -3,17 +3,19 @@ import {
   IsNumber,
   IsOptional,
   IsBoolean,
-  IsPositive,
+  IsEnum,
+  IsNotEmpty,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { PreparationStation } from '@prisma/client';
 
 export class CreateProductDto {
   @ApiPropertyOptional() @IsString() @IsOptional() categoryId?: string;
-  @ApiProperty() @IsString() name: string;
+  @ApiProperty() @IsString() @IsNotEmpty() name: string;
   @ApiPropertyOptional() @IsString() @IsOptional() description?: string;
-  @ApiProperty() @IsNumber() @IsPositive() @Type(() => Number) price: number;
+  @ApiProperty() @IsNumber() @Min(0) @Type(() => Number) price: number;
   @ApiPropertyOptional()
   @IsNumber()
   @Min(0)
@@ -29,5 +31,10 @@ export class CreateProductDto {
   @IsOptional()
   @Type(() => Number)
   taxRate?: number;
+  @ApiPropertyOptional({ enum: PreparationStation })
+  @IsEnum(PreparationStation)
+  @IsOptional()
+  preparationStation?: PreparationStation;
+  @ApiPropertyOptional() @IsBoolean() @IsOptional() trackInventory?: boolean;
   @ApiPropertyOptional() @IsBoolean() @IsOptional() isFeatured?: boolean;
 }

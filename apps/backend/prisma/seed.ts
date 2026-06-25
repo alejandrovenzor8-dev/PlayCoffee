@@ -6,7 +6,21 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding PlayCoffee database...');
 
-  const passwordHash = await bcrypt.hash('admin123', 10);
+  const isProduction = process.env.NODE_ENV === 'production';
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@nexorh.com';
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+
+  if (isProduction && !adminPassword) {
+    throw new Error(
+      'SEED_ADMIN_PASSWORD is required to seed an admin in production',
+    );
+  }
+  const normalizedAdminPassword = adminPassword ?? 'admin123';
+  if (isProduction && normalizedAdminPassword.length < 12) {
+    throw new Error('SEED_ADMIN_PASSWORD must be at least 12 characters');
+  }
+
+  const passwordHash = await bcrypt.hash(normalizedAdminPassword, 10);
 
   const branch = await prisma.branch.upsert({
     where: { id: 'branch-1' },
@@ -32,7 +46,7 @@ async function main() {
   });
 
   const adminUser = await prisma.user.upsert({
-    where: { email: 'admin@nexorh.com' },
+    where: { email: adminEmail },
     update: {
       branchId: branch.id,
       passwordHash,
@@ -41,7 +55,7 @@ async function main() {
       deletedAt: null,
     },
     create: {
-      email: 'admin@nexorh.com',
+      email: adminEmail,
       branchId: branch.id,
       firstName: 'Admin',
       lastName: 'System',
@@ -197,8 +211,12 @@ async function main() {
   });
 
   console.log('\nCredentials:');
-  console.log('   Email: admin@nexorh.com');
-  console.log('   Password: admin123');
+  console.log(`   Email: ${adminEmail}`);
+  console.log(
+    isProduction
+      ? '   Password: set from SEED_ADMIN_PASSWORD'
+      : '   Password: admin123',
+  );
   console.log(`   Branch: ${branch.id}\n`);
 }
 

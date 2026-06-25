@@ -21,10 +21,15 @@ FROM node:20-alpine AS runner
 RUN npm install -g pnpm@9
 WORKDIR /app
 
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_WS_URL
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 
 COPY --from=builder /app /app
 EXPOSE 3000
 
-CMD ["pnpm", "--dir", "apps/frontend", "run", "start"]
+CMD ["sh", "-c", "pnpm --dir apps/frontend exec next start -p ${PORT:-3000}"]
