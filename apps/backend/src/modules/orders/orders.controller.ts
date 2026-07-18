@@ -15,6 +15,7 @@ import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
+import { AddOrderItemsDto } from './dto/add-order-items.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OrderStatus, UserRoleEnum } from '@prisma/client';
@@ -117,6 +118,34 @@ export class OrdersController {
         total: order.total,
       });
     }
+    return order;
+  }
+
+  @Post(':id/items')
+  async addItems(
+    @Param('id') id: string,
+    @Body() dto: AddOrderItemsDto,
+    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
+  ) {
+    const order = await this.ordersService.addItems(
+      id,
+      dto.items,
+      userBranchId,
+      userId,
+    );
+    this.realtime.emitOrderEvent(order.branchId, 'order.sent_to_kitchen', {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      total: order.total,
+    });
+    this.realtime.emitOrderEvent(order.branchId, 'order.updated', {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      total: order.total,
+    });
     return order;
   }
 

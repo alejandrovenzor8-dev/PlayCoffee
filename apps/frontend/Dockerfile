@@ -14,6 +14,7 @@ ARG NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 
+RUN test -n "$NEXT_PUBLIC_API_URL" && test -n "$NEXT_PUBLIC_WS_URL"
 RUN pnpm --dir apps/frontend run build
 
 # ─── Production image ─────────────────────────────────────────────────────────

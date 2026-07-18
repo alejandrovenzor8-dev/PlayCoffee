@@ -1,17 +1,73 @@
 "use client";
 
 import { Rnd } from "react-rnd";
-import { cn } from "@/lib/utils";
-import type { RestaurantTable, TableStatus } from "@/types/orders.types";
-import { Users, Circle, Square } from "lucide-react";
+import { cn, formatCurrency } from "@/lib/utils";
+import type { Order, RestaurantTable } from "@/types/orders.types";
+import { Clock, Circle, Square, UserRound, Users, Utensils } from "lucide-react";
 
-const STATUS_COLORS: Record<TableStatus, { bg: string; border: string; text: string }> = {
-  AVAILABLE: { bg: "bg-emerald-500/10", border: "border-emerald-500", text: "text-emerald-700" },
-  OCCUPIED: { bg: "bg-blue-500/10", border: "border-blue-500", text: "text-blue-700" },
-  RESERVED: { bg: "bg-amber-500/10", border: "border-amber-500", text: "text-amber-700" },
-  MAINTENANCE: { bg: "bg-red-500/10", border: "border-red-500", text: "text-red-700" },
-  BLOCKED: { bg: "bg-gray-500/10", border: "border-gray-500", text: "text-gray-600" },
+type VisualStatus = "FREE" | "OCCUPIED" | "PAYMENT_PENDING" | "RESERVED" | "BLOCKED";
+
+const STATUS_COLORS: Record<
+  VisualStatus,
+  { label: string; bg: string; border: string; text: string; pill: string }
+> = {
+  FREE: {
+    label: "LIBRE",
+    bg: "bg-emerald-50",
+    border: "border-emerald-300",
+    text: "text-emerald-800",
+    pill: "bg-emerald-100 text-emerald-700",
+  },
+  OCCUPIED: {
+    label: "OCUPADA",
+    bg: "bg-blue-50",
+    border: "border-blue-300",
+    text: "text-blue-800",
+    pill: "bg-blue-100 text-blue-700",
+  },
+  PAYMENT_PENDING: {
+    label: "PENDIENTE DE COBRO",
+    bg: "bg-amber-50",
+    border: "border-amber-300",
+    text: "text-amber-800",
+    pill: "bg-amber-100 text-amber-700",
+  },
+  RESERVED: {
+    label: "RESERVADA",
+    bg: "bg-violet-50",
+    border: "border-violet-300",
+    text: "text-violet-800",
+    pill: "bg-violet-100 text-violet-700",
+  },
+  BLOCKED: {
+    label: "BLOQUEADA",
+    bg: "bg-slate-100",
+    border: "border-slate-300",
+    text: "text-slate-600",
+    pill: "bg-slate-200 text-slate-600",
+  },
 };
+
+function getOpenOrder(table: RestaurantTable) {
+  return table.orders?.[0] ?? null;
+}
+
+function getVisualStatus(table: RestaurantTable, order: Order | null): VisualStatus {
+  if (table.status === "RESERVED") return "RESERVED";
+  if (table.status === "AVAILABLE") return "FREE";
+  if (table.status === "MAINTENANCE" || table.status === "BLOCKED") return "BLOCKED";
+  if (order?.status === "DELIVERED" || order?.status === "READY") return "PAYMENT_PENDING";
+  return "OCCUPIED";
+}
+
+function elapsedMinutes(order: Order | null) {
+  if (!order?.createdAt) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000));
+}
+
+function itemCount(order: Order | null) {
+  return order?.items?.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+}
 
 interface TableItemProps {
   table: RestaurantTable;
@@ -31,29 +87,32 @@ export function TableItem({
   onClick,
   selected = false,
 }: TableItemProps) {
-  const statusConfig = STATUS_COLORS[table.status];
-  const width = table.width || 120;
-  const height = table.height || 120;
+  const openOrder = getOpenOrder(table);
+  const visualStatus = getVisualStatus(table, openOrder);
+  const statusConfig = STATUS_COLORS[visualStatus];
+  const width = table.width || 150;
+  const height = table.height || 130;
   const x = table.posX || 0;
   const y = table.posY || 0;
   const rotation = table.rotation || 0;
+  const minutes = elapsedMinutes(openOrder);
 
   const isCircle = table.shape === "circle";
   const isOval = table.shape === "oval";
 
-  // Contenido de la mesa
   const tableContent = (
-    <div
+    <button
+      type="button"
       className={cn(
-        "flex flex-col items-center justify-center w-full h-full transition-all",
-        "border-2 shadow-lg cursor-pointer",
+        "flex h-full w-full flex-col justify-between border-2 p-3 text-left shadow-sm transition-all",
+        "focus:outline-none focus:ring-4 focus:ring-blue-200",
         statusConfig.bg,
         statusConfig.border,
         isCircle && "rounded-full",
         isOval && "rounded-[50%]",
         !isCircle && !isOval && "rounded-xl",
-        selected && "ring-4 ring-blue-400",
-        isEditMode && "hover:shadow-xl hover:scale-105"
+        selected && "ring-4 ring-blue-300",
+        isEditMode ? "cursor-move hover:scale-105 hover:shadow-xl" : "cursor-pointer hover:-translate-y-0.5 hover:shadow-md",
       )}
       style={{
         backgroundColor: table.color || undefined,
@@ -61,26 +120,52 @@ export function TableItem({
       }}
       onClick={onClick}
     >
-      {/* Número de mesa */}
-      <div className={cn("text-2xl font-bold", statusConfig.text)}>
-        {table.number}
-      </div>
-
-      {/* Capacidad */}
-      <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-        <Users className="h-3 w-3" />
-        <span>{table.capacity}</span>
-      </div>
-
-      {/* Estado */}
-      {!isEditMode && table.status === "OCCUPIED" && (
-        <div className="text-[10px] font-semibold mt-1 px-2 py-0.5 bg-blue-500 text-white rounded-full">
-          EN USO
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className={cn("text-2xl font-bold leading-none", statusConfig.text)}>
+            {table.number}
+          </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {table.area?.name ?? "Area"}
+          </div>
         </div>
-      )}
+        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", statusConfig.pill)}>
+          {statusConfig.label}
+        </span>
+      </div>
+
+      <div className="space-y-1.5 text-xs text-slate-600">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1">
+            <Users className="h-3.5 w-3.5" />
+            {table.capacity} pax
+          </span>
+          <span className="font-semibold text-slate-900">
+            {openOrder ? formatCurrency(Number(openOrder.total)) : formatCurrency(0)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5" />
+            {minutes === null ? "0 min" : `${minutes} min`}
+          </span>
+          <span className="flex items-center gap-1">
+            <Utensils className="h-3.5 w-3.5" />
+            {itemCount(openOrder)} productos
+          </span>
+        </div>
+        <div className="flex items-center gap-1 truncate">
+          <UserRound className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">
+            {openOrder?.user
+              ? `${openOrder.user.firstName} ${openOrder.user.lastName}`
+              : "Sin mesero"}
+          </span>
+        </div>
+      </div>
 
       {isEditMode && (
-        <div className="absolute top-1 right-1">
+        <div className="absolute right-1 top-1">
           {isCircle ? (
             <Circle className="h-3 w-3 text-muted-foreground" />
           ) : (
@@ -88,40 +173,28 @@ export function TableItem({
           )}
         </div>
       )}
-    </div>
+    </button>
   );
 
-  // En modo edición, usar Rnd para drag & resize
   if (isEditMode) {
     return (
       <Rnd
         size={{ width, height }}
         position={{ x, y }}
-        onDragStop={(e, d) => {
-          onPositionChange?.(table.id, d.x, d.y);
+        onDragStop={(event, data) => {
+          onPositionChange?.(table.id, data.x, data.y);
         }}
-        onResizeStop={(e, direction, ref, delta, position) => {
+        onResizeStop={(event, direction, ref, delta, position) => {
           onSizeChange?.(table.id, parseInt(ref.style.width), parseInt(ref.style.height));
           onPositionChange?.(table.id, position.x, position.y);
         }}
-        minWidth={80}
-        minHeight={80}
-        maxWidth={300}
-        maxHeight={300}
+        minWidth={110}
+        minHeight={100}
+        maxWidth={320}
+        maxHeight={260}
         bounds="parent"
-        enableResizing={{
-          top: true,
-          right: true,
-          bottom: true,
-          left: true,
-          topRight: true,
-          bottomRight: true,
-          bottomLeft: true,
-          topLeft: true,
-        }}
-        style={{
-          transform: `rotate(${rotation}deg)`,
-        }}
+        enableResizing
+        style={{ transform: `rotate(${rotation}deg)` }}
         className="z-10"
       >
         {tableContent}
@@ -129,7 +202,6 @@ export function TableItem({
     );
   }
 
-  // En modo operación, solo visualizar
   return (
     <div
       style={{

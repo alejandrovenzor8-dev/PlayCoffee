@@ -46,7 +46,14 @@ type PosOrder = {
   id: string;
   orderNumber: string;
   total?: number;
+  status?: string;
 };
+
+const openOrderStatuses = ["PENDING", "CONFIRMED", "PREPARING", "READY", "DELIVERED"];
+
+function getOpenTableOrder(table?: RestaurantTable) {
+  return table?.orders?.find((order) => openOrderStatuses.includes(order.status)) ?? null;
+}
 
 const paymentLabels: Record<PaymentMethod, string> = {
   CASH: "Efectivo",
@@ -144,34 +151,44 @@ export default function PosPage() {
     loadOperationalData();
   }, [loadOperationalData]);
 
-  useEffect(() => {
-    if (!linkedOrderId) return;
+  const loadExistingOrderForPayment = useCallback((orderId: string) => {
     setIsProcessing(true);
+    setPaymentError(null);
     Promise.all([
-      ordersApi.getOne(linkedOrderId),
-      paymentsApi.getByOrder(linkedOrderId),
+      ordersApi.getOne(orderId),
+      paymentsApi.getByOrder(orderId),
     ])
       .then(([order, paymentInfo]) => {
         setCurrentOrder({
           id: order.id,
           orderNumber: order.orderNumber,
           total: Number(order.total),
+          status: order.status,
         });
         setPayments(paymentInfo.payments ?? []);
         setPaymentSummary(paymentInfo.summary);
-        setPaymentOpen(paymentInfo.summary?.paymentStatus !== "PAID");
       })
       .catch(() => {
-        setPaymentError("No se pudo cargar el ticket solicitado.");
+        setPaymentError("No se pudo cargar el ticket de la mesa.");
+        setCurrentOrder(null);
+        setPayments([]);
+        setPaymentSummary(null);
       })
       .finally(() => setIsProcessing(false));
-  }, [linkedOrderId]);
+  }, []);
 
-  const availableTables = tables.filter((table) =>
-    ["AVAILABLE", "RESERVED"].includes(table.status)
+  useEffect(() => {
+    if (!linkedOrderId) return;
+    loadExistingOrderForPayment(linkedOrderId);
+    setPaymentOpen(true);
+  }, [linkedOrderId, loadExistingOrderForPayment]);
+
+  const payableTables = tables.filter((table) =>
+    ["AVAILABLE", "RESERVED"].includes(table.status) || Boolean(getOpenTableOrder(table))
   );
 
   const selectedTable = tables.find((table) => table.id === cart.tableId);
+  const selectedTableOpenOrder = getOpenTableOrder(selectedTable);
   const cartTotal = cart.total();
   const payableTotal = paymentSummary?.total ?? currentOrder?.total ?? cartTotal;
   const paidAmount = paymentSummary?.totalPaid ?? 0;
@@ -185,6 +202,83 @@ export default function PosPage() {
     const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
+  const canAddExtrasToCurrentOrder = Boolean(
+    currentOrder &&
+      paymentSummary?.paymentStatus !== "PAID" &&
+      currentOrder.status !== "COMPLETED" &&
+      currentOrder.status !== "CANCELLED"
+  );
+
+  const hasKitchenOrBarExtras = cart.items.some(
+    (item) => item.product.preparationStation === "KITCHEN" || item.product.preparationStation === "BAR"
+  );
+
+  const addCartItemsToCurrentOrder = async () => {
+    if (!currentOrder || cart.items.length === 0 || !canAddExtrasToCurrentOrder) return;
+    setIsProcessing(true);
+    setPaymentError(null);
+    const selectedTableId = cart.tableId;
+    try {
+      const updatedOrder = await ordersApi.addItems(currentOrder.id, {
+        items: cart.items.map((item) => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+          notes: item.notes,
+          modifiers: item.selectedModifiers.map((modifier) => ({
+            modifierId: modifier.modifier.id,
+            quantity: modifier.quantity,
+          })),
+        })),
+      });
+      const paymentInfo = await paymentsApi.getByOrder(currentOrder.id);
+      setCurrentOrder({
+        id: updatedOrder.id,
+        orderNumber: updatedOrder.orderNumber,
+        total: Number(updatedOrder.total),
+        status: updatedOrder.status,
+      });
+      setPayments(paymentInfo.payments ?? []);
+      setPaymentSummary(paymentInfo.summary);
+      cart.clearCart();
+      cart.setTableId(selectedTableId);
+      loadOperationalData();
+      setSuccessMsg(
+        hasKitchenOrBarExtras
+          ? "Producto agregado. Recuerda enviar/imprimir comanda si aplica."
+          : "Producto agregado al ticket."
+      );
+      setTimeout(() => setSuccessMsg(null), 4500);
+    } catch (err) {
+      console.error(err);
+      setPaymentError("No se pudieron agregar los productos al ticket existente.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleTableSelection = (value: string) => {
+    if (value === "takeaway") {
+      cart.setTableId(undefined);
+      setCurrentOrder(null);
+      setPayments([]);
+      setPaymentSummary(null);
+      return;
+    }
+
+    cart.setTableId(value);
+    const table = tables.find((candidate) => candidate.id === value);
+    const openOrder = getOpenTableOrder(table);
+    if (openOrder) {
+      cart.clearCart();
+      cart.setTableId(value);
+      loadExistingOrderForPayment(openOrder.id);
+      return;
+    }
+
+    setCurrentOrder(null);
+    setPayments([]);
+    setPaymentSummary(null);
+  };
 
   const ensureOrder = async () => {
     if (currentOrder) return currentOrder;
@@ -206,7 +300,7 @@ export default function PosPage() {
     };
 
     const order = await ordersApi.create(orderData);
-    const nextOrder = { id: order.id, orderNumber: order.orderNumber };
+    const nextOrder = { id: order.id, orderNumber: order.orderNumber, status: order.status };
     setCurrentOrder(nextOrder);
     setPaymentSummary({
       orderId: order.id,
@@ -228,6 +322,10 @@ export default function PosPage() {
 
   const handleAddPayment = async () => {
     if ((!currentOrder && cart.items.length === 0) || remainingAmount <= 0) return;
+    if (currentOrder && cart.items.length > 0) {
+      setPaymentError("Primero agrega los productos nuevos al ticket antes de cobrar.");
+      return;
+    }
     setIsProcessing(true);
     setPaymentError(null);
     try {
@@ -363,6 +461,7 @@ export default function PosPage() {
               <button
                 key={product.id}
                 onClick={() => cart.addItem(product)}
+                disabled={Boolean(currentOrder) && !canAddExtrasToCurrentOrder}
                 className="group relative flex flex-col rounded-xl border bg-card p-4 text-left transition-all hover:border-blue-400 hover:shadow-md active:scale-95"
               >
                 {product.isFeatured && (
@@ -391,7 +490,9 @@ export default function PosPage() {
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2">
             <ShoppingCart className="h-4 w-4" />
-            <span className="font-semibold text-sm">Carrito</span>
+            <span className="font-semibold text-sm">
+              {currentOrder ? "Extras del ticket" : "Carrito"}
+            </span>
           </div>
           <Badge variant="secondary">{cart.itemCount()} items</Badge>
         </div>
@@ -403,31 +504,45 @@ export default function PosPage() {
           </div>
           <Select
             value={cart.tableId ?? "takeaway"}
-            onValueChange={(value) => cart.setTableId(value === "takeaway" ? undefined : value)}
+            onValueChange={handleTableSelection}
           >
             <SelectTrigger>
               <SelectValue placeholder="Seleccionar mesa" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="takeaway">Sin mesa / para llevar</SelectItem>
-              {availableTables.map((table) => (
+              {payableTables.map((table) => {
+                const openOrder = getOpenTableOrder(table);
+                return (
                 <SelectItem key={table.id} value={table.id}>
                   Mesa {table.number}
                   {table.area?.name ? ` - ${table.area.name}` : ""}
+                  {openOrder ? ` - pendiente ${formatCurrency(Number(openOrder.total))}` : ""}
                 </SelectItem>
-              ))}
+                );
+              })}
             </SelectContent>
           </Select>
           {selectedTable && (
             <p className="text-xs text-muted-foreground">
-              Capacidad: {selectedTable.capacity} personas
+              {selectedTableOpenOrder
+                ? `Ticket ${selectedTableOpenOrder.orderNumber} listo para cobrar`
+                : `Capacidad: ${selectedTable.capacity} personas`}
             </p>
           )}
         </div>
 
         {/* Cart items */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {cart.items.length === 0 ? (
+          {currentOrder && cart.items.length === 0 ? (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
+              <p className="font-semibold text-blue-900">Ticket cargado</p>
+              <p className="mt-1 text-blue-700">{currentOrder.orderNumber}</p>
+              <p className="mt-2 text-xs text-blue-700">
+                Total pendiente: {formatCurrency(remainingAmount)}
+              </p>
+            </div>
+          ) : cart.items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-12 text-center text-muted-foreground">
               <ShoppingCart className="h-10 w-10 opacity-30 mb-3" />
               <p className="text-sm">Carrito vacío</p>
@@ -473,25 +588,55 @@ export default function PosPage() {
 
         {/* Cart footer */}
         <div className="border-t p-4 space-y-3">
+          {currentOrder && (
+            <div className="rounded-lg border bg-blue-50 p-3 text-xs text-blue-800">
+              <p className="font-semibold">Ticket {currentOrder.orderNumber}</p>
+              <p className="mt-1">
+                Los productos nuevos deben agregarse al ticket antes de cobrar.
+              </p>
+            </div>
+          )}
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Subtotal</span>
+            <span className="text-muted-foreground">
+              {currentOrder ? "Extras por agregar" : "Subtotal"}
+            </span>
             <span>{formatCurrency(cart.subtotal())}</span>
           </div>
+          {currentOrder && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Ticket actual</span>
+              <span>{formatCurrency(payableTotal)}</span>
+            </div>
+          )}
           <div className="flex justify-between font-bold">
-            <span>Total</span>
-            <span className="text-blue-600 text-lg">{formatCurrency(cart.total())}</span>
+            <span>{currentOrder ? "Total estimado" : "Total"}</span>
+            <span className="text-blue-600 text-lg">
+              {formatCurrency((currentOrder ? payableTotal : 0) + cart.total())}
+            </span>
           </div>
+
+          {currentOrder && cart.items.length > 0 && (
+            <Button
+              className="w-full"
+              variant="secondary"
+              disabled={isProcessing || !canAddExtrasToCurrentOrder}
+              onClick={addCartItemsToCurrentOrder}
+            >
+              {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Agregar al ticket
+            </Button>
+          )}
 
           <Button
             className="w-full"
-            disabled={cart.items.length === 0}
+            disabled={(cart.items.length === 0 && !currentOrder) || Boolean(currentOrder && cart.items.length > 0)}
             onClick={() => {
               resetPaymentForm();
               setPaymentOpen(true);
             }}
           >
             <CreditCard className="h-4 w-4 mr-2" />
-            Cobrar {cart.items.length > 0 ? formatCurrency(cart.total()) : ""}
+            Cobrar {currentOrder || cart.items.length > 0 ? formatCurrency(payableTotal) : ""}
           </Button>
 
           {cart.items.length > 0 && (

@@ -41,7 +41,7 @@ export interface OrderItem {
   totalPrice: number;
   notes?: string;
   status: OrderStatus;
-  product: { id: string; name: string; imageUrl?: string };
+  product: { id: string; name: string; imageUrl?: string; preparationStation?: "KITCHEN" | "BAR" | "NONE" };
   modifiers: OrderItemModifier[];
 }
 

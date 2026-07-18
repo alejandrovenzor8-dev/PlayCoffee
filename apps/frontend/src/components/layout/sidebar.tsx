@@ -3,85 +3,91 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { getAllowedNavigationItems } from "@/lib/permissions";
 import { useAuthStore } from "@/store/auth.store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
+  Baby,
+  BarChart3,
+  CalendarDays,
+  ChevronRight,
+  ClipboardList,
+  Coffee,
   LayoutDashboard,
+  LogOut,
+  Package,
+  Settings,
   ShoppingCart,
   Table2,
-  ClipboardList,
-  Baby,
-  CalendarDays,
-  Package,
-  BarChart3,
-  Settings,
-  Coffee,
   Tags,
+  UserCog,
   WalletCards,
-  LogOut,
-  ChevronRight,
 } from "lucide-react";
 
-const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/pos", label: "Caja / POS", icon: ShoppingCart },
-  { href: "/cash", label: "Corte de Caja", icon: WalletCards },
-  { href: "/products", label: "Catalogo", icon: Tags, roles: ["SUPER_ADMIN", "ADMIN", "CASHIER"] },
-  { href: "/tables", label: "Mesas", icon: Table2 },
-  { href: "/orders", label: "Comandero", icon: ClipboardList },
-  { href: "/child-access", label: "Control Infantil", icon: Baby },
-  { href: "/reservations", label: "Reservas", icon: CalendarDays },
-  { href: "/inventory", label: "Inventario", icon: Package },
-  { href: "/reports", label: "Reportes", icon: BarChart3 },
-  { href: "/settings", label: "Configuración", icon: Settings },
-];
+const navIcons = {
+  dashboard: LayoutDashboard,
+  pos: ShoppingCart,
+  cash: WalletCards,
+  products: Tags,
+  tables: Table2,
+  orders: ClipboardList,
+  "child-access": Baby,
+  reservations: CalendarDays,
+  inventory: Package,
+  reports: BarChart3,
+  users: UserCog,
+  settings: Settings,
+};
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user, clearAuth } = useAuthStore();
+  const navItems = getAllowedNavigationItems(user);
 
   const initials = user
     ? `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`
     : "?";
 
   return (
-    <aside className="flex h-screen w-64 flex-col border-r"
+    <aside
+      className="flex h-screen w-64 flex-col border-r"
       style={{
         background: "hsl(var(--sidebar-background))",
         borderColor: "hsl(var(--sidebar-border))",
         color: "hsl(var(--sidebar-foreground))",
       }}
     >
-      {/* Logo */}
-      <div className="flex h-16 items-center gap-3 px-5 border-b" style={{ borderColor: "hsl(var(--sidebar-border))" }}>
+      <div
+        className="flex h-16 items-center gap-3 border-b px-5"
+        style={{ borderColor: "hsl(var(--sidebar-border))" }}
+      >
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600">
           <Coffee className="h-5 w-5 text-white" />
         </div>
         <div>
-          <p className="text-sm font-bold text-white leading-none">PlayCoffee</p>
-          <p className="text-xs opacity-60 mt-0.5">Management OS</p>
+          <p className="text-sm font-bold leading-none text-white">PlayCoffee</p>
+          <p className="mt-0.5 text-xs opacity-60">Management OS</p>
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-2">
-        <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider opacity-40">
-          Menú Principal
+      <nav className="flex-1 overflow-y-auto px-2 py-4">
+        <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider opacity-40">
+          Menu Principal
         </p>
-        {navItems
-          .filter((item) => !item.roles || item.roles.includes(user?.role ?? ""))
-          .map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon }) => {
+          const Icon = navIcons[icon as keyof typeof navIcons];
           const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
+
           return (
             <Link
               key={href}
               href={href}
               className={cn(
-                "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 mb-0.5",
+                "group mb-0.5 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150",
                 isActive
                   ? "bg-blue-600 text-white shadow-sm"
-                  : "opacity-70 hover:opacity-100 hover:bg-white/10"
+                  : "opacity-70 hover:bg-white/10 hover:opacity-100",
               )}
             >
               <Icon className="h-4 w-4 shrink-0" />
@@ -92,27 +98,32 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* User footer */}
-      <div className="border-t p-3" style={{ borderColor: "hsl(var(--sidebar-border))" }}>
+      <div
+        className="border-t p-3"
+        style={{ borderColor: "hsl(var(--sidebar-border))" }}
+      >
         <div className="flex items-center gap-3 rounded-lg p-2">
           <Avatar className="h-8 w-8">
             <AvatarImage src={user?.avatarUrl} />
-            <AvatarFallback className="bg-blue-600 text-white text-xs font-bold">
+            <AvatarFallback className="bg-blue-600 text-xs font-bold text-white">
               {initials}
             </AvatarFallback>
           </Avatar>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-white">
               {user ? `${user.firstName} ${user.lastName}` : "Usuario"}
             </p>
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 h-4 mt-0.5 bg-white/10 text-white/70 border-0">
-              {user?.role ?? "—"}
+            <Badge
+              variant="secondary"
+              className="mt-0.5 h-4 border-0 bg-white/10 px-1.5 py-0 text-xs text-white/70"
+            >
+              {user?.role ?? "-"}
             </Badge>
           </div>
           <button
             onClick={clearAuth}
-            className="rounded p-1.5 opacity-50 hover:opacity-100 hover:bg-white/10 transition-opacity"
-            title="Cerrar sesión"
+            className="rounded p-1.5 opacity-50 transition-opacity hover:bg-white/10 hover:opacity-100"
+            title="Cerrar sesion"
           >
             <LogOut className="h-4 w-4" />
           </button>

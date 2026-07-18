@@ -1,15 +1,19 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/store/auth.store";
 
-function getRequiredPublicUrl(name: "NEXT_PUBLIC_API_URL" | "NEXT_PUBLIC_WS_URL") {
-  const value = process.env[name];
+function getApiUrl() {
+  const value = process.env.NEXT_PUBLIC_API_URL;
   if (!value && process.env.NODE_ENV === "production") {
-    throw new Error(`${name} is required`);
+    throw new Error("NEXT_PUBLIC_API_URL is required");
   }
   return value ?? "http://localhost:3001";
 }
 
-const BASE_URL = getRequiredPublicUrl("NEXT_PUBLIC_API_URL");
+function normalizeApiBaseUrl(url: string) {
+  return url.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+}
+
+const BASE_URL = normalizeApiBaseUrl(getApiUrl());
 let refreshPromise: Promise<string | null> | null = null;
 
 function clearClientAuth() {
@@ -112,6 +116,30 @@ export const authApi = {
     api.post("/auth/refresh", { refreshToken }).then((r) => r.data.data),
 };
 
+export type UserRole = "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER";
+
+export type UserPayload = {
+  email: string;
+  firstName: string;
+  lastName: string;
+  password?: string;
+  phone?: string;
+  pin?: string;
+  role?: UserRole;
+  avatarUrl?: string;
+  isActive?: boolean;
+};
+
+export const usersApi = {
+  getAll: () => api.get("/users").then((r) => r.data.data),
+  getOne: (id: string) => api.get(`/users/${id}`).then((r) => r.data.data),
+  create: (data: UserPayload) =>
+    api.post("/users", data).then((r) => r.data.data),
+  update: (id: string, data: Omit<Partial<UserPayload>, "password">) =>
+    api.patch(`/users/${id}`, data).then((r) => r.data.data),
+  delete: (id: string) => api.delete(`/users/${id}`).then((r) => r.data.data),
+};
+
 export type ProductPayload = {
   categoryId?: string;
   name: string;
@@ -144,6 +172,8 @@ export const ordersApi = {
     api.get("/orders", { params }).then((r) => r.data.data),
   getOne: (id: string) => api.get(`/orders/${id}`).then((r) => r.data.data),
   create: (data: unknown) => api.post("/orders", data).then((r) => r.data.data),
+  addItems: (id: string, data: unknown) =>
+    api.post(`/orders/${id}/items`, data).then((r) => r.data.data),
   updateStatus: (id: string, data: { status: string; notes?: string }) =>
     api.patch(`/orders/${id}`, data).then((r) => r.data.data),
   cancel: (id: string) => api.delete(`/orders/${id}`),

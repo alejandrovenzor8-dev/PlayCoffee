@@ -1,9 +1,15 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import { AxiosError } from "axios";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/store/auth.store";
 import { authApi } from "@/lib/api";
+import {
+  canAccessModule,
+  getDefaultRouteForRole,
+  getModuleForPath,
+} from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -99,22 +105,36 @@ function PINPad({ onSubmit, isLoading }: { onSubmit: (pin: string) => void; isLo
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setAuth, isAuthenticated } = useAuthStore();
+  const { setAuth, isAuthenticated, user } = useAuthStore();
   const nextPath = searchParams.get("next") || "/";
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [emailForm, setEmailForm] = useState({ email: "", password: "" });
 
+  const getSafeNextPath = (candidate: string, nextUser: { role: "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER" }) => {
+    const localPath = candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
+    return canAccessModule(nextUser, getModuleForPath(localPath))
+      ? localPath
+      : getDefaultRouteForRole(nextUser);
+  };
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
     try {
-      const data = await authApi.login(emailForm.email, emailForm.password);
+      const data = await authApi.login(
+        emailForm.email.trim(),
+        emailForm.password.trim(),
+      );
       setAuth(data.user, data.accessToken, data.refreshToken);
-      router.push(nextPath);
+      router.push(getSafeNextPath(nextPath, data.user));
     } catch (err: unknown) {
+      if (!(err instanceof AxiosError) || err.response?.status !== 401) {
+        setError("No se pudo iniciar sesión. Verifica conexión con el servidor.");
+        return;
+      }
       setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
     } finally {
       setIsLoading(false);
@@ -128,7 +148,7 @@ function LoginContent() {
     try {
       const data = await authApi.loginPin(email, pin);
       setAuth(data.user, data.accessToken, data.refreshToken);
-      router.push(nextPath);
+      router.push(getSafeNextPath(nextPath, data.user));
     } catch {
       setError("PIN incorrecto o usuario no encontrado.");
     } finally {
@@ -137,10 +157,10 @@ function LoginContent() {
   };
 
   useEffect(() => {
-    if (isAuthenticated) {
-      router.replace(nextPath);
+    if (isAuthenticated && user) {
+      router.replace(getSafeNextPath(nextPath, user));
     }
-  }, [isAuthenticated, nextPath, router]);
+  }, [isAuthenticated, nextPath, router, user]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
