@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,8 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus, PaymentStatus, TableStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
+
+const MONEY_SCALE = 100;
 
 @Injectable()
 export class OrdersService {
@@ -125,9 +128,10 @@ export class OrdersService {
   }
 
   private async buildOrderItems(items: CreateOrderItemDto[]) {
-    const productIds = items.map((i) => i.productId);
+    const normalizedItems = this.consolidateOrderItems(items);
+    const productIds = normalizedItems.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: productIds }, deletedAt: null },
     });
 
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -144,10 +148,15 @@ export class OrdersService {
       };
     }> = [];
 
-    for (const item of items) {
+    for (const item of normalizedItems) {
       const product = productMap.get(item.productId);
       if (!product)
         throw new NotFoundException(`Product ${item.productId} not found`);
+      if (!product.isActive) {
+        throw new BadRequestException(
+          `Product ${product.name} is inactive and cannot be added to an order`,
+        );
+      }
 
       const unitPrice = Number(product.price);
       let itemModifiersTotal = 0;
@@ -194,6 +203,31 @@ export class OrdersService {
     return { subtotal, itemsData };
   }
 
+  private consolidateOrderItems(items: CreateOrderItemDto[]) {
+    const itemMap = new Map<string, CreateOrderItemDto>();
+
+    for (const item of items) {
+      const modifiers = [...(item.modifiers ?? [])].sort((a, b) => {
+        const modifierCompare = a.modifierId.localeCompare(b.modifierId);
+        if (modifierCompare !== 0) return modifierCompare;
+        return (a.quantity ?? 1) - (b.quantity ?? 1);
+      });
+      const key = JSON.stringify({
+        productId: item.productId,
+        notes: item.notes ?? null,
+        modifiers,
+      });
+      const existing = itemMap.get(key);
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        itemMap.set(key, { ...item, modifiers });
+      }
+    }
+
+    return [...itemMap.values()];
+  }
+
   async addItems(
     id: string,
     items: CreateOrderItemDto[],
@@ -208,10 +242,8 @@ export class OrdersService {
     ) {
       throw new BadRequestException('Cannot add items to a closed order');
     }
-    const totalPaid = order.payments
-      .filter((payment) => payment.status === PaymentStatus.COMPLETED)
-      .reduce((sum, payment) => sum + Number(payment.amount), 0);
-    if (Number(order.total) > 0 && totalPaid >= Number(order.total)) {
+    const summary = this.getPaymentSummary(order.total, order.payments);
+    if (summary.totalCents > 0 && summary.remainingCents <= 0) {
       throw new BadRequestException('Cannot add items to a paid order');
     }
 
@@ -263,11 +295,14 @@ export class OrdersService {
     userId?: string,
   ) {
     const order = await this.findOne(id, branchId);
+    if (dto.status) {
+      this.assertStatusChangeAllowed(order, dto.status);
+    }
 
     const updatedOrder = await this.prisma.order.update({
       where: { id },
       data: {
-        status: dto.status,
+        ...(dto.status ? { status: dto.status } : {}),
         notes: dto.notes,
         ...(dto.status === OrderStatus.COMPLETED
           ? { completedAt: new Date() }
@@ -334,6 +369,46 @@ export class OrdersService {
       branchId,
       userId,
     );
+  }
+
+  private assertStatusChangeAllowed(
+    order: Awaited<ReturnType<OrdersService['findOne']>>,
+    nextStatus: OrderStatus,
+  ) {
+    if (order.status === OrderStatus.COMPLETED) {
+      throw new BadRequestException('Cannot change a completed order');
+    }
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException('Cannot change a cancelled order');
+    }
+    if (nextStatus !== OrderStatus.COMPLETED) return;
+
+    const summary = this.getPaymentSummary(order.total, order.payments);
+    if (summary.remainingCents > 0) {
+      throw new ConflictException(
+        'La orden todavía tiene un saldo pendiente y no puede completarse',
+      );
+    }
+  }
+
+  private getPaymentSummary(
+    totalValue: unknown,
+    payments: Array<{ amount: unknown; status: PaymentStatus }>,
+  ) {
+    const totalCents = this.toMoneyCents(totalValue);
+    const paidCents = payments
+      .filter((payment) => payment.status === PaymentStatus.COMPLETED)
+      .reduce((sum, payment) => sum + this.toMoneyCents(payment.amount), 0);
+
+    return {
+      totalCents,
+      paidCents,
+      remainingCents: Math.max(0, totalCents - paidCents),
+    };
+  }
+
+  private toMoneyCents(value: unknown) {
+    return Math.round(Number(value) * MONEY_SCALE);
   }
 
   async getDailySummary(branchId: string, date?: string) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
+import { getApiErrorMessage, productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
 import { useAuthStore } from "@/store/auth.store";
@@ -214,12 +214,12 @@ export default function PosPage() {
   );
 
   const addCartItemsToCurrentOrder = async () => {
-    if (!currentOrder || cart.items.length === 0 || !canAddExtrasToCurrentOrder) return;
+    if (isProcessing || !currentOrder || cart.items.length === 0 || !canAddExtrasToCurrentOrder) return;
     setIsProcessing(true);
     setPaymentError(null);
     const selectedTableId = cart.tableId;
     try {
-      const updatedOrder = await ordersApi.addItems(currentOrder.id, {
+      await ordersApi.addItems(currentOrder.id, {
         items: cart.items.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
@@ -230,6 +230,7 @@ export default function PosPage() {
           })),
         })),
       });
+      const updatedOrder = await ordersApi.getOne(currentOrder.id);
       const paymentInfo = await paymentsApi.getByOrder(currentOrder.id);
       setCurrentOrder({
         id: updatedOrder.id,
@@ -250,7 +251,7 @@ export default function PosPage() {
       setTimeout(() => setSuccessMsg(null), 4500);
     } catch (err) {
       console.error(err);
-      setPaymentError("No se pudieron agregar los productos al ticket existente.");
+      setPaymentError(getApiErrorMessage(err, "No se pudieron agregar los productos al ticket."));
     } finally {
       setIsProcessing(false);
     }

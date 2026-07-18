@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AxiosError } from "axios";
 import { ordersApi, printApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useOrdersStore } from "@/store/orders.store";
@@ -28,6 +29,22 @@ import {
 } from "lucide-react";
 import { useRealtime } from "@/hooks/useRealtime";
 import { RealtimeIndicator } from "@/components/realtime/realtime-indicator";
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof AxiosError) {
+    const data = error.response?.data as { message?: string | string[] } | undefined;
+    if (Array.isArray(data?.message)) return data.message.join(" ");
+    if (data?.message) return data.message;
+  }
+  return fallback;
+}
+
+function getRemainingAmount(order: { total: number; payments?: Array<{ amount: number; status: string }> }) {
+  const paid = (order.payments ?? [])
+    .filter((payment) => payment.status === "COMPLETED")
+    .reduce((sum, payment) => sum + Number(payment.amount), 0);
+  return Math.max(0, Number(order.total) - paid);
+}
 
 const STATUS_CONFIG: Record<OrderStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" }> = {
   PENDING: { label: "Pendiente", variant: "warning" },
@@ -88,8 +105,8 @@ export default function OrdersPage() {
     try {
       const updated = await ordersApi.updateStatus(orderId, { status });
       updateOrder(updated);
-    } catch {
-      setLoadError("No se pudo actualizar la orden. Intenta de nuevo.");
+    } catch (err) {
+      setLoadError(getApiErrorMessage(err, "No se pudo actualizar la orden. Intenta de nuevo."));
     }
   };
 
@@ -130,7 +147,6 @@ export default function OrdersPage() {
     CONFIRMED: "PREPARING",
     PREPARING: "READY",
     READY: "DELIVERED",
-    DELIVERED: "COMPLETED",
   };
 
   return (
@@ -184,6 +200,7 @@ export default function OrdersPage() {
                   const { label, variant } = STATUS_CONFIG[order.status];
                   const next = nextStatus[order.status];
                   const elapsed = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000);
+                  const remainingAmount = getRemainingAmount(order);
 
                   return (
                     <Card key={order.id} className="overflow-hidden">
@@ -245,7 +262,14 @@ export default function OrdersPage() {
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-bold">{formatCurrency(order.total)}</span>
+                          <div>
+                            <span className="text-sm font-bold">{formatCurrency(order.total)}</span>
+                            {order.status === "DELIVERED" && remainingAmount > 0 && (
+                              <p className="text-xs text-amber-700">
+                                Entregada, pendiente de cobro: {formatCurrency(remainingAmount)}
+                              </p>
+                            )}
+                          </div>
                           {next && (
                             <Button
                               size="sm"

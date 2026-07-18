@@ -89,6 +89,9 @@ export class PaymentsService {
       if (order.status === OrderStatus.CANCELLED) {
         throw new BadRequestException('Cancelled orders cannot be paid');
       }
+      if (order.status === OrderStatus.COMPLETED) {
+        throw new BadRequestException('Order is already fully paid');
+      }
 
       const currentSummary = this.buildSummary(
         order.id,
@@ -183,7 +186,7 @@ export class PaymentsService {
       }
 
       return { order, payment: this.serializePayment(payment), summary };
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     await this.audit.record({
       branchId: result.order.branchId,

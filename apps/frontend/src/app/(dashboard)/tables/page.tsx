@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ordersApi, productsApi, tablesApi } from "@/lib/api";
+import { getApiErrorMessage, ordersApi, productsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { formatCurrency } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth.store";
@@ -220,24 +220,25 @@ export default function TablesPage() {
   };
 
   const sendDraftItems = async () => {
-    if (draftItems.length === 0) return;
+    if (isSavingOrder || draftItems.length === 0) return;
     const order = currentOrder ?? (await createOrderForTable());
     if (!order) return;
 
     setIsSavingOrder(true);
     setOperationError(null);
     try {
-      const updated = await ordersApi.addItems(order.id, {
+      await ordersApi.addItems(order.id, {
         items: draftItems.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
         })),
       });
+      const updated = await ordersApi.getOne(order.id);
       setCurrentOrder(updated);
       setDraftItems([]);
       refreshTables();
-    } catch {
-      setOperationError("No se pudieron enviar los productos a cocina/barra.");
+    } catch (err) {
+      setOperationError(getApiErrorMessage(err, "No se pudieron agregar los productos al ticket."));
     } finally {
       setIsSavingOrder(false);
     }
@@ -552,7 +553,7 @@ export default function TablesPage() {
                     {draftItems.length > 0 && (
                       <div className="rounded-lg border border-blue-200 bg-white">
                         <div className="border-b px-3 py-2 text-xs font-semibold text-blue-700">
-                          Nuevos sin enviar
+                          Nuevos sin agregar
                         </div>
                         {draftItems.map((item) => (
                           <div key={item.product.id} className="flex items-center gap-2 border-b px-3 py-2 last:border-0">
@@ -627,7 +628,7 @@ export default function TablesPage() {
                     ) : (
                       <Send className="mr-2 h-4 w-4" />
                     )}
-                    Enviar cocina/barra
+                    Agregar al ticket
                   </Button>
                 </div>
               </div>

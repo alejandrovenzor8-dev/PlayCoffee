@@ -30,6 +30,26 @@ export const api = axios.create({
   timeout: 15000,
 });
 
+export function getApiErrorMessage(error: unknown, fallback: string) {
+  if (axios.isAxiosError(error)) {
+    if (!error.response) {
+      if (error.code === "ECONNABORTED") {
+        return "La solicitud tardó demasiado. Revisa la conexión e intenta de nuevo.";
+      }
+      return "No hay conexión con el servidor. Revisa la red e intenta de nuevo.";
+    }
+
+    const data = error.response.data as
+      | { message?: string | string[]; error?: string }
+      | undefined;
+    if (Array.isArray(data?.message)) return data.message.join(" ");
+    if (typeof data?.message === "string" && data.message.trim()) return data.message;
+    if (typeof data?.error === "string" && data.error.trim()) return data.error;
+  }
+
+  return fallback;
+}
+
 // Attach access token to every request
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (typeof window !== "undefined") {
