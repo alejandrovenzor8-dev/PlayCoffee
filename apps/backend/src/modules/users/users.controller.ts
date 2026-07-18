@@ -31,44 +31,44 @@ export class UsersController {
   @ApiQuery({ name: 'branchId', required: false })
   findAll(
     @Query('branchId') branchId?: string,
-    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser() user?: { role: UserRoleEnum; branchId?: string },
   ) {
-    return this.usersService.findAll(userBranchId ?? branchId);
+    return this.usersService.findAll(user, branchId);
   }
 
   @Get(':id')
   findOne(
     @Param('id') id: string,
-    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser() user?: { role: UserRoleEnum; branchId?: string },
   ) {
-    return this.usersService.findOne(id, userBranchId);
+    return this.usersService.findOne(id, user);
   }
 
   @Post()
   create(
     @Body() dto: CreateUserDto,
-    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser()
+    user?: { id: string; role: UserRoleEnum; branchId?: string },
   ) {
-    return this.usersService.create({
-      ...dto,
-      branchId: userBranchId ?? dto.branchId,
-    });
+    return this.usersService.create(dto, user);
   }
 
   @Patch(':id')
   update(
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,
-    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser()
+    user?: { id: string; role: UserRoleEnum; branchId?: string },
   ) {
-    return this.usersService.update(id, dto, userBranchId);
+    return this.usersService.update(id, dto, user);
   }
 
   @Delete(':id')
   remove(
     @Param('id') id: string,
-    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser()
+    user?: { id: string; role: UserRoleEnum; branchId?: string },
   ) {
-    return this.usersService.remove(id, userBranchId);
+    return this.usersService.remove(id, user);
   }
 }

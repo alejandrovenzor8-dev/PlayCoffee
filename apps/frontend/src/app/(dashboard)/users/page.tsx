@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AxiosError } from "axios";
 import { usersApi, type UserPayload, type UserRole } from "@/lib/api";
 import { cn, formatDate } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth.store";
@@ -97,6 +98,22 @@ const roleClassNames: Record<UserRole, string> = {
   WAITER: "bg-amber-50 text-amber-700 border-amber-200",
 };
 
+const superAdminRoles: UserRole[] = ["ADMIN", "CASHIER", "WAITER"];
+const adminRoles: UserRole[] = ["CASHIER", "WAITER"];
+
+function getManageableRoles(currentRole?: UserRole | null) {
+  return currentRole === "SUPER_ADMIN" ? superAdminRoles : adminRoles;
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof AxiosError) {
+    const data = error.response?.data as { message?: string | string[] } | undefined;
+    if (Array.isArray(data?.message)) return data.message.join(" ");
+    if (data?.message) return data.message;
+  }
+  return fallback;
+}
+
 function toForm(user: ManagedUser): UserFormState {
   return {
     email: user.email,
@@ -140,6 +157,11 @@ function toUpdatePayload(form: UserFormState): Omit<Partial<UserPayload>, "passw
 export default function UsersPage() {
   const currentUser = useAuthStore((state) => state.user);
   const canManage = currentUser?.role === "SUPER_ADMIN" || currentUser?.role === "ADMIN";
+  const manageableRoles = getManageableRoles(currentUser?.role);
+  const filterRoleOptions =
+    currentUser?.role === "SUPER_ADMIN"
+      ? (["SUPER_ADMIN", ...superAdminRoles] as UserRole[])
+      : manageableRoles;
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -149,6 +171,10 @@ export default function UsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const formRoleOptions =
+    currentUser?.role === "SUPER_ADMIN" && editingUser?.role === "SUPER_ADMIN"
+      ? (["SUPER_ADMIN", ...superAdminRoles] as UserRole[])
+      : manageableRoles;
   const [form, setForm] = useState<UserFormState>(emptyForm);
   const [pendingAction, setPendingAction] = useState<{
     user: ManagedUser;
@@ -192,11 +218,12 @@ export default function UsersPage() {
 
   const openCreate = () => {
     setEditingUser(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, role: manageableRoles[0] ?? "WAITER" });
     setDialogOpen(true);
   };
 
   const openEdit = (user: ManagedUser) => {
+    if (currentUser?.role === "ADMIN" && user.role === "SUPER_ADMIN") return;
     setEditingUser(user);
     setForm(toForm(user));
     setDialogOpen(true);
@@ -235,8 +262,8 @@ export default function UsersPage() {
       }
       setDialogOpen(false);
       loadUsers();
-    } catch {
-      setError("No se pudo guardar el usuario. Revisa correo, rol y permisos.");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No se pudo guardar el usuario. Revisa correo, rol y permisos."));
     } finally {
       setIsSaving(false);
     }
@@ -256,8 +283,8 @@ export default function UsersPage() {
       }
       setPendingAction(null);
       loadUsers();
-    } catch {
-      setError("No se pudo completar la accion solicitada.");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No se pudo completar la accion solicitada."));
     } finally {
       setIsSaving(false);
     }
@@ -312,10 +339,9 @@ export default function UsersPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los roles</SelectItem>
-            <SelectItem value="SUPER_ADMIN">Super admin</SelectItem>
-            <SelectItem value="ADMIN">Admin</SelectItem>
-            <SelectItem value="CASHIER">Cajero</SelectItem>
-            <SelectItem value="WAITER">Mesero</SelectItem>
+            {filterRoleOptions.map((role) => (
+              <SelectItem key={role} value={role}>{roleLabels[role]}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -385,7 +411,10 @@ export default function UsersPage() {
                   </td>
                 </tr>
               ) : (
-                visibleUsers.map((user) => (
+                visibleUsers.map((user) => {
+                  const canModifyUser =
+                    !(currentUser?.role === "ADMIN" && user.role === "SUPER_ADMIN");
+                  return (
                   <tr key={user.id} className="border-b last:border-0">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -428,30 +457,37 @@ export default function UsersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
-                        <Button size="sm" variant="outline" onClick={() => openEdit(user)}>
-                          <Edit3 className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setPendingAction({ user, type: "toggle" })}
-                          disabled={user.id === currentUser?.id}
-                        >
-                          <Power className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-red-600 hover:text-red-700"
-                          onClick={() => setPendingAction({ user, type: "delete" })}
-                          disabled={user.id === currentUser?.id}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {canModifyUser ? (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => openEdit(user)}>
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setPendingAction({ user, type: "toggle" })}
+                              disabled={user.id === currentUser?.id}
+                            >
+                              <Power className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => setPendingAction({ user, type: "delete" })}
+                              disabled={user.id === currentUser?.id}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Protegido</span>
+                        )}
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -525,10 +561,9 @@ export default function UsersPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="SUPER_ADMIN">Super admin</SelectItem>
-                    <SelectItem value="ADMIN">Admin</SelectItem>
-                    <SelectItem value="CASHIER">Cajero</SelectItem>
-                    <SelectItem value="WAITER">Mesero</SelectItem>
+                    {formRoleOptions.map((role) => (
+                      <SelectItem key={role} value={role}>{roleLabels[role]}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
