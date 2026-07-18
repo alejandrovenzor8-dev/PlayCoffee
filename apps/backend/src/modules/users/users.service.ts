@@ -28,10 +28,16 @@ type ManagedUser = {
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(actor?: Pick<UserActor, 'role' | 'branchId'>, branchId?: string) {
+  async findAll(
+    actor?: Pick<UserActor, 'role' | 'branchId'>,
+    branchId?: string,
+  ) {
     const scopedBranchId = this.getReadBranchScope(actor, branchId);
     return this.prisma.user.findMany({
-      where: { deletedAt: null, ...(scopedBranchId ? { branchId: scopedBranchId } : {}) },
+      where: {
+        deletedAt: null,
+        ...(scopedBranchId ? { branchId: scopedBranchId } : {}),
+      },
       select: {
         id: true,
         email: true,
@@ -193,7 +199,9 @@ export class UsersService {
     requestedBranchId?: string,
   ) {
     if (this.isSuperAdmin(actor)) {
-      return requestedBranchId ?? target.branchId ?? actor?.branchId ?? undefined;
+      return (
+        requestedBranchId ?? target.branchId ?? actor?.branchId ?? undefined
+      );
     }
     if (!actor?.branchId) throw new BadRequestException('branchId is required');
     if (requestedBranchId && requestedBranchId !== actor.branchId) {
@@ -216,14 +224,22 @@ export class UsersService {
     }
   }
 
-  private assertCanMutateUser(actor: UserActor | undefined, target: ManagedUser) {
+  private assertCanMutateUser(
+    actor: UserActor | undefined,
+    target: ManagedUser,
+  ) {
     this.assertCanAccessUser(actor, target);
     if (this.isAdmin(actor) && target.role === UserRoleEnum.SUPER_ADMIN) {
-      throw new ForbiddenException('No puedes modificar un usuario SUPER_ADMIN');
+      throw new ForbiddenException(
+        'No puedes modificar un usuario SUPER_ADMIN',
+      );
     }
   }
 
-  private assertCanAssignRole(actor: UserActor | undefined, role: UserRoleEnum) {
+  private assertCanAssignRole(
+    actor: UserActor | undefined,
+    role: UserRoleEnum,
+  ) {
     if (role === UserRoleEnum.SUPER_ADMIN) {
       throw new ForbiddenException(
         'No tienes permiso para asignar el rol SUPER_ADMIN',

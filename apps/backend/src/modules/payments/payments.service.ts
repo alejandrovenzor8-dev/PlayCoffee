@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -57,136 +58,151 @@ export class PaymentsService {
     if (dto.amount <= 0)
       throw new BadRequestException('Payment amount must be greater than zero');
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.findFirst({
-        where: {
-          id: dto.orderId,
-          deletedAt: null,
-          branchId,
-        },
-        include: {
-          payments: true,
-          items: {
+    const result = await this.prisma
+      .$transaction(
+        async (tx) => {
+          const order = await tx.order.findFirst({
+            where: {
+              id: dto.orderId,
+              deletedAt: null,
+              branchId,
+            },
             include: {
-              product: {
+              payments: true,
+              items: {
                 include: {
-                  inventoryItems: {
-                    where: { branchId, deletedAt: null, isActive: true },
-                    select: {
-                      id: true,
-                      currentStock: true,
-                      minStock: true,
+                  product: {
+                    include: {
+                      inventoryItems: {
+                        where: { branchId, deletedAt: null, isActive: true },
+                        select: {
+                          id: true,
+                          currentStock: true,
+                          minStock: true,
+                        },
+                      },
                     },
                   },
                 },
               },
             },
-          },
-        },
-      });
-
-      if (!order) throw new NotFoundException('Order not found');
-      if (order.status === OrderStatus.CANCELLED) {
-        throw new BadRequestException('Cancelled orders cannot be paid');
-      }
-      if (order.status === OrderStatus.COMPLETED) {
-        throw new BadRequestException('Order is already fully paid');
-      }
-
-      const currentSummary = this.buildSummary(
-        order.id,
-        order.total,
-        order.payments,
-      );
-
-      if (currentSummary.paymentStatus === 'PAID') {
-        throw new BadRequestException('Order is already fully paid');
-      }
-
-      const roundedRemaining = this.roundMoney(currentSummary.remainingAmount);
-      const requestedAmount = this.roundMoney(dto.amount);
-      let appliedAmount = requestedAmount;
-      let receivedAmount =
-        dto.receivedAmount === undefined
-          ? undefined
-          : this.roundMoney(dto.receivedAmount);
-      let changeAmount = 0;
-
-      if (dto.method === PaymentMethod.CASH) {
-        receivedAmount = receivedAmount ?? requestedAmount;
-        if (receivedAmount <= 0) {
-          throw new BadRequestException(
-            'Received cash amount must be greater than zero',
-          );
-        }
-        appliedAmount = Math.min(receivedAmount, roundedRemaining);
-        changeAmount = this.roundMoney(
-          Math.max(0, receivedAmount - roundedRemaining),
-        );
-      } else {
-        if (requestedAmount > roundedRemaining) {
-          throw new BadRequestException(
-            'Card or transfer amount cannot exceed remaining balance',
-          );
-        }
-        appliedAmount = requestedAmount;
-      }
-
-      if (appliedAmount <= 0) {
-        throw new BadRequestException(
-          'Applied payment amount must be greater than zero',
-        );
-      }
-
-      const shift = await tx.shift.findFirst({
-        where: { branchId: order.branchId, closedAt: null },
-        select: { id: true },
-        orderBy: { openedAt: 'desc' },
-      });
-
-      const payment = await tx.payment.create({
-        data: {
-          orderId: dto.orderId,
-          shiftId: shift?.id,
-          userId,
-          method: dto.method,
-          amount: appliedAmount,
-          receivedAmount,
-          tipAmount: dto.tipAmount ?? 0,
-          status: PaymentStatus.COMPLETED,
-          processedAt: new Date(),
-          reference: dto.reference,
-          change: changeAmount,
-        },
-      });
-
-      const summary = this.buildSummary(order.id, order.total, [
-        ...order.payments,
-        payment,
-      ]);
-
-      if (summary.paymentStatus === 'PAID') {
-        await this.discountInventoryForPaidOrder(tx, order, userId);
-
-        await tx.order.update({
-          where: { id: dto.orderId },
-          data: {
-            status: OrderStatus.COMPLETED,
-            completedAt: new Date(),
-            inventoryDiscountedAt: order.inventoryDiscountedAt ?? new Date(),
-          },
-        });
-
-        if (order.tableId) {
-          await tx.restaurantTable.update({
-            where: { id: order.tableId },
-            data: { status: TableStatus.AVAILABLE },
           });
-        }
-      }
 
-      return { order, payment: this.serializePayment(payment), summary };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+          if (!order) throw new NotFoundException('Order not found');
+          if (order.status === OrderStatus.CANCELLED) {
+            throw new BadRequestException('Cancelled orders cannot be paid');
+          }
+          if (order.status === OrderStatus.COMPLETED) {
+            throw new BadRequestException('Order is already fully paid');
+          }
+
+          const currentSummary = this.buildSummary(
+            order.id,
+            order.total,
+            order.payments,
+          );
+
+          if (currentSummary.paymentStatus === 'PAID') {
+            throw new BadRequestException('Order is already fully paid');
+          }
+
+          const roundedRemaining = this.roundMoney(
+            currentSummary.remainingAmount,
+          );
+          const requestedAmount = this.roundMoney(dto.amount);
+          let appliedAmount = requestedAmount;
+          let receivedAmount =
+            dto.receivedAmount === undefined
+              ? undefined
+              : this.roundMoney(dto.receivedAmount);
+          let changeAmount = 0;
+
+          if (dto.method === PaymentMethod.CASH) {
+            receivedAmount = receivedAmount ?? requestedAmount;
+            if (receivedAmount <= 0) {
+              throw new BadRequestException(
+                'Received cash amount must be greater than zero',
+              );
+            }
+            appliedAmount = Math.min(receivedAmount, roundedRemaining);
+            changeAmount = this.roundMoney(
+              Math.max(0, receivedAmount - roundedRemaining),
+            );
+          } else {
+            if (requestedAmount > roundedRemaining) {
+              throw new BadRequestException(
+                'Card or transfer amount cannot exceed remaining balance',
+              );
+            }
+            appliedAmount = requestedAmount;
+          }
+
+          if (appliedAmount <= 0) {
+            throw new BadRequestException(
+              'Applied payment amount must be greater than zero',
+            );
+          }
+
+          const shift = await tx.shift.findFirst({
+            where: { branchId: order.branchId, closedAt: null },
+            select: { id: true },
+            orderBy: { openedAt: 'desc' },
+          });
+
+          const payment = await tx.payment.create({
+            data: {
+              orderId: dto.orderId,
+              shiftId: shift?.id,
+              userId,
+              method: dto.method,
+              amount: appliedAmount,
+              receivedAmount,
+              tipAmount: dto.tipAmount ?? 0,
+              status: PaymentStatus.COMPLETED,
+              processedAt: new Date(),
+              reference: dto.reference,
+              change: changeAmount,
+            },
+          });
+
+          const summary = this.buildSummary(order.id, order.total, [
+            ...order.payments,
+            payment,
+          ]);
+
+          if (summary.paymentStatus === 'PAID') {
+            await this.discountInventoryForPaidOrder(tx, order, userId);
+
+            await tx.order.update({
+              where: { id: dto.orderId },
+              data: {
+                status: OrderStatus.COMPLETED,
+                completedAt: new Date(),
+                inventoryDiscountedAt:
+                  order.inventoryDiscountedAt ?? new Date(),
+              },
+            });
+
+            if (order.tableId) {
+              await tx.restaurantTable.update({
+                where: { id: order.tableId },
+                data: { status: TableStatus.AVAILABLE },
+              });
+            }
+          }
+
+          return { order, payment: this.serializePayment(payment), summary };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch((error: unknown) => {
+        if (this.isTransactionWriteConflict(error)) {
+          throw new ConflictException(
+            'Payment could not be processed because the order changed. Please retry.',
+          );
+        }
+        throw error;
+      });
 
     await this.audit.record({
       branchId: result.order.branchId,
@@ -322,6 +338,13 @@ export class PaymentsService {
 
   private roundMoney(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private isTransactionWriteConflict(error: unknown) {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2034'
+    );
   }
 
   private async discountInventoryForPaidOrder(
