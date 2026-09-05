@@ -14,6 +14,7 @@ import { ChildAccessService } from './child-access.service';
 import {
   CheckoutChildAccessDto,
   CreateChildAccessDto,
+  UpdateChildAccessDto,
 } from './dto/create-child-access.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -83,6 +84,23 @@ export class ChildAccessController {
     @CurrentUser('id') userId?: string,
   ) {
     return this.childAccessService.checkout(
+      id,
+      dto,
+      userBranchId ?? branchId,
+      userId,
+    );
+  }
+
+  @Patch(':id')
+  @Roles(UserRoleEnum.CASHIER)
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateChildAccessDto,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+    @CurrentUser('id') userId?: string,
+  ) {
+    return this.childAccessService.update(
       id,
       dto,
       userBranchId ?? branchId,

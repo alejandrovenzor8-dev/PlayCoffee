@@ -44,7 +44,10 @@ export class AuthController {
   @ApiBearerAuth('JWT')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Logout and revoke refresh token' })
-  async logout(@CurrentUser('id') userId: string) {
-    await this.authService.logout(userId);
+  async logout(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('sessionId') sessionId?: string,
+  ) {
+    await this.authService.logout(userId, sessionId);
   }
 }

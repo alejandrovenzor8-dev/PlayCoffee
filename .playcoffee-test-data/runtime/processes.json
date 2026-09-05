@@ -1,0 +1,18 @@
+{
+  "backend": {
+    "pid": 11920,
+    "startedAtUtcTicks": 639238709355248872,
+    "executable": "C:\\Program Files\\nodejs\\node.exe"
+  },
+  "frontend": {
+    "pid": 7844,
+    "startedAtUtcTicks": 639238709355405881,
+    "executable": "C:\\Program Files\\nodejs\\node.exe"
+  },
+  "https": null,
+  "printAgent": {
+    "pid": 21648,
+    "startedAtUtcTicks": 639238709355514346,
+    "executable": "C:\\Program Files\\nodejs\\node.exe"
+  }
+}

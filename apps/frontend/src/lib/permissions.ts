@@ -65,6 +65,7 @@ const ROLE_MODULES: Record<UserRole, ModuleKey[]> = {
     "inventory",
   ],
   WAITER: ["tables", "orders", "products"],
+  COOK: ["orders", "products"],
 };
 
 export const NAVIGATION_ITEMS: NavigationItem[] = [

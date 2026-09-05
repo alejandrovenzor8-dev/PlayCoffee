@@ -26,7 +26,7 @@ import { RealtimeGateway } from '../realtime/realtime.gateway';
 @ApiTags('Orders')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
+@Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER, UserRoleEnum.COOK)
 @Controller('orders')
 export class OrdersController {
   constructor(
@@ -65,6 +65,7 @@ export class OrdersController {
   }
 
   @Post()
+  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
   async create(
     @Body() dto: CreateOrderDto,
     @CurrentUser('id') userId: string,
@@ -122,6 +123,7 @@ export class OrdersController {
   }
 
   @Post(':id/items')
+  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
   async addItems(
     @Param('id') id: string,
     @Body() dto: AddOrderItemsDto,
@@ -150,6 +152,7 @@ export class OrdersController {
   }
 
   @Delete(':id')
+  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
   @HttpCode(HttpStatus.NO_CONTENT)
   async cancel(
     @Param('id') id: string,

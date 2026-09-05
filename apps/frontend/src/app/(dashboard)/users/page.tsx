@@ -89,6 +89,7 @@ const roleLabels: Record<UserRole, string> = {
   ADMIN: "Admin",
   CASHIER: "Cajero",
   WAITER: "Mesero",
+  COOK: "Cocinero",
 };
 
 const roleClassNames: Record<UserRole, string> = {
@@ -96,10 +97,19 @@ const roleClassNames: Record<UserRole, string> = {
   ADMIN: "bg-blue-50 text-blue-700 border-blue-200",
   CASHIER: "bg-emerald-50 text-emerald-700 border-emerald-200",
   WAITER: "bg-amber-50 text-amber-700 border-amber-200",
+  COOK: "bg-orange-50 text-orange-700 border-orange-200",
 };
 
-const superAdminRoles: UserRole[] = ["ADMIN", "CASHIER", "WAITER"];
-const adminRoles: UserRole[] = ["CASHIER", "WAITER"];
+const superAdminRoles: UserRole[] = ["ADMIN", "CASHIER", "WAITER", "COOK"];
+const adminRoles: UserRole[] = ["CASHIER", "WAITER", "COOK"];
+
+const rolePermissions: Array<{ role: UserRole; permissions: string }> = [
+  { role: "SUPER_ADMIN", permissions: "Acceso total, configuración y administración de todos los usuarios." },
+  { role: "ADMIN", permissions: "Operación completa de la sucursal, reportes, catálogo, inventario y personal operativo." },
+  { role: "CASHIER", permissions: "Caja, cobros, mesas, pedidos, niños, reservaciones e inventario operativo; sin configuración ni usuarios." },
+  { role: "WAITER", permissions: "Mesas, captura y consulta de pedidos y catálogo; sin cobros, caja ni configuración." },
+  { role: "COOK", permissions: "Consulta del comandero y catálogo; puede actualizar el avance de preparación, sin cobrar ni modificar productos." },
+];
 
 function getManageableRoles(currentRole?: UserRole | null) {
   return currentRole === "SUPER_ADMIN" ? superAdminRoles : adminRoles;
@@ -379,8 +389,20 @@ export default function UsersPage() {
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Operativos</p>
           <p className="mt-1 text-2xl font-bold">
-            {users.filter((user) => user.role === "CASHIER" || user.role === "WAITER").length}
+            {users.filter((user) => ["CASHIER", "WAITER", "COOK"].includes(user.role)).length}
           </p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-4">
+        <h2 className="font-semibold">Permisos por tipo de usuario</h2>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          {rolePermissions.map((item) => (
+            <div key={item.role} className="rounded-lg border p-3 text-sm">
+              <Badge variant="outline" className={cn("mb-2", roleClassNames[item.role])}>{roleLabels[item.role]}</Badge>
+              <p className="text-muted-foreground">{item.permissions}</p>
+            </div>
+          ))}
         </div>
       </div>
 

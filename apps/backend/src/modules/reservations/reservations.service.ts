@@ -130,6 +130,8 @@ export class ReservationsService {
       contactPhone: dto.contactPhone ?? current.contactPhone,
       contactEmail: dto.contactEmail ?? current.contactEmail ?? undefined,
       partySize: dto.partySize ?? current.partySize,
+      packageQuantity: dto.packageQuantity ?? current.packageQuantity,
+      externalFood: dto.externalFood ?? current.externalFood,
       reservedAt: dto.reservedAt ?? current.reservedAt.toISOString(),
       endTime: dto.endTime ?? current.endTime?.toISOString(),
       duration: dto.duration ?? current.duration,
@@ -224,8 +226,12 @@ export class ReservationsService {
         name: dto.name,
         description: dto.description,
         price: dto.price,
-        maxGuests: dto.maxGuests,
-        duration: dto.duration,
+        maxGuests: 25,
+        duration: 240,
+        includedChildren: 15,
+        maxChildren: 25,
+        extraChildPrice: 150,
+        externalFoodServiceFee: dto.externalFoodServiceFee ?? 0,
         minDeposit: dto.minDeposit,
         isActive: dto.isActive ?? true,
       },
@@ -257,7 +263,14 @@ export class ReservationsService {
     }
     return this.prisma.partyPackage.update({
       where: { id },
-      data: dto,
+      data: {
+        ...dto,
+        duration: 240,
+        maxGuests: 25,
+        includedChildren: 15,
+        maxChildren: 25,
+        extraChildPrice: 150,
+      },
     });
   }
 
@@ -297,9 +310,9 @@ export class ReservationsService {
       dto.tableId,
     );
     const startTime = new Date(dto.reservedAt);
-    const duration = packageData?.duration ?? dto.duration;
+    const duration = packageData ? 240 : dto.duration;
     const endTime = packageData
-      ? new Date(startTime.getTime() + packageData.duration * 60000)
+      ? new Date(startTime.getTime() + 240 * 60000)
       : dto.endTime
         ? new Date(dto.endTime)
         : duration
@@ -312,7 +325,33 @@ export class ReservationsService {
       );
     }
 
-    const totalAmount = dto.totalAmount ?? Number(packageData?.price ?? 0);
+    const packageQuantity = Math.max(1, dto.packageQuantity ?? 1);
+    const includedChildren = packageData
+      ? packageData.includedChildren * packageQuantity
+      : 0;
+    if (packageData && dto.partySize > packageData.maxChildren) {
+      throw new BadRequestException(
+        `A party allows a maximum of ${packageData.maxChildren} children`,
+      );
+    }
+    const extraChildren = packageData
+      ? Math.max(0, dto.partySize - includedChildren)
+      : 0;
+    const extraChildrenAmount = packageData
+      ? this.roundMoney(extraChildren * Number(packageData.extraChildPrice))
+      : 0;
+    const externalFood = Boolean(dto.externalFood);
+    const externalFoodFee =
+      packageData && externalFood
+        ? Number(packageData.externalFoodServiceFee)
+        : 0;
+    const totalAmount = packageData
+      ? this.roundMoney(
+          Number(packageData.price) * packageQuantity +
+            extraChildrenAmount +
+            externalFoodFee,
+        )
+      : Number(dto.totalAmount ?? 0);
     const depositAmount = dto.depositAmount ?? dto.deposit ?? 0;
     if (totalAmount < 0)
       throw new BadRequestException('Total cannot be negative');
@@ -344,6 +383,11 @@ export class ReservationsService {
         contactPhone: dto.contactPhone.trim(),
         contactEmail: dto.contactEmail,
         partySize: dto.partySize,
+        packageQuantity,
+        externalFood,
+        extraChildren,
+        extraChildrenAmount,
+        externalFoodFee,
         reservedAt: startTime,
         endTime,
         duration: Math.ceil((endTime.getTime() - startTime.getTime()) / 60000),
@@ -476,5 +520,9 @@ export class ReservationsService {
         select: { id: true, orderNumber: true, total: true, status: true },
       },
     } satisfies Prisma.ReservationInclude;
+  }
+
+  private roundMoney(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 }

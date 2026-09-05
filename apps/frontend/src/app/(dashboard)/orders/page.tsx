@@ -72,6 +72,7 @@ export default function OrdersPage() {
   const [printDocument, setPrintDocument] = useState<PrintTicketDocument | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
+  const [isQueueing, setIsQueueing] = useState(false);
 
   const loadOrders = useCallback(() => {
     setLoading(true);
@@ -140,6 +141,20 @@ export default function OrdersPage() {
       return <KitchenTicket document={printDocument} />;
     }
     return <BarTicket document={printDocument} />;
+  };
+
+  const handleQueuePrint = async () => {
+    if (!printDocument) return;
+    setIsQueueing(true);
+    setLoadError(null);
+    try {
+      await printApi.queue(printDocument.order.id, printDocument.type);
+      setPrintOpen(false);
+    } catch (error) {
+      setLoadError(getApiErrorMessage(error, "No se pudo enviar el ticket a la impresora local."));
+    } finally {
+      setIsQueueing(false);
+    }
   };
 
   const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -295,6 +310,8 @@ export default function OrdersPage() {
         onOpenChange={setPrintOpen}
         document={printDocument}
         title="Vista de impresion"
+        onQueue={handleQueuePrint}
+        isQueueing={isQueueing}
       >
         {renderPrintDocument()}
       </PrintableTicket>

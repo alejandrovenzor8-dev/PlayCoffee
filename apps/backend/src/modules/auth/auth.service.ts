@@ -9,6 +9,14 @@ export interface TokenPair {
   refreshToken: string;
 }
 
+type RefreshPayload = {
+  sub: string;
+  email: string;
+  role: string;
+  sid: string;
+  exp?: number;
+};
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -48,13 +56,12 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const tokens = await this.generateTokens(
+    const tokens = await this.createSessionTokens(
       user.id,
       user.email,
       String(user.role),
       user.branchId ?? undefined,
     );
-    await this.saveRefreshToken(user.id, tokens.refreshToken);
 
     return { ...tokens, user };
   }
@@ -85,19 +92,18 @@ export class AuthService {
       refreshToken: _refreshToken,
       ...safeUser
     } = user;
-    const tokens = await this.generateTokens(
+    const tokens = await this.createSessionTokens(
       user.id,
       user.email,
       String(user.role),
       user.branchId ?? undefined,
     );
-    await this.saveRefreshToken(user.id, tokens.refreshToken);
 
     return { ...tokens, user: safeUser };
   }
 
   async refreshTokens(token: string): Promise<TokenPair> {
-    let payload: { sub: string; email: string; role: string };
+    let payload: RefreshPayload;
     try {
       payload = this.jwt.verify(token, {
         secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
@@ -106,17 +112,26 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: { id: payload.sub, deletedAt: null },
-    });
+    if (!payload.sid) {
+      throw new UnauthorizedException('Invalid refresh session');
+    }
 
-    if (!user || !user.isActive) {
+    const session = await this.prisma.authSession.findFirst({
+      where: {
+        id: payload.sid,
+        userId: payload.sub,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: { user: true },
+    });
+    const user = session?.user;
+
+    if (!user || user.deletedAt || !user.isActive) {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    const valid = user.refreshToken
-      ? await bcrypt.compare(token, user.refreshToken)
-      : false;
+    const valid = await bcrypt.compare(token, session.refreshTokenHash);
 
     if (!valid) throw new UnauthorizedException('Refresh token revoked');
 
@@ -125,17 +140,47 @@ export class AuthService {
       user.email,
       String(user.role),
       user.branchId ?? undefined,
+      session.id,
     );
-    await this.saveRefreshToken(user.id, tokens.refreshToken);
+    await this.rotateSession(session.id, tokens.refreshToken);
 
     return tokens;
   }
 
-  async logout(userId: string): Promise<void> {
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { refreshToken: null },
+  async logout(userId: string, sessionId?: string): Promise<void> {
+    await this.prisma.authSession.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+        ...(sessionId ? { id: sessionId } : {}),
+      },
+      data: { revokedAt: new Date() },
     });
+  }
+
+  private async createSessionTokens(
+    userId: string,
+    email: string,
+    role: string,
+    branchId?: string,
+  ) {
+    const session = await this.prisma.authSession.create({
+      data: {
+        userId,
+        refreshTokenHash: 'pending',
+        expiresAt: new Date(),
+      },
+      select: { id: true },
+    });
+    const tokens = await this.generateTokens(
+      userId,
+      email,
+      role,
+      branchId,
+      session.id,
+    );
+    await this.rotateSession(session.id, tokens.refreshToken);
+    return tokens;
   }
 
   private async generateTokens(
@@ -143,8 +188,9 @@ export class AuthService {
     email: string,
     role: string,
     branchId?: string,
+    sessionId?: string,
   ): Promise<TokenPair> {
-    const payload = { sub: userId, email, role, branchId };
+    const payload = { sub: userId, email, role, branchId, sid: sessionId };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(payload, {
@@ -164,11 +210,19 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private async saveRefreshToken(userId: string, token: string): Promise<void> {
+  private async rotateSession(sessionId: string, token: string): Promise<void> {
     const hashed = await bcrypt.hash(token, 10);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { refreshToken: hashed },
+    const decoded = this.jwt.decode(token);
+    if (!decoded?.exp) {
+      throw new UnauthorizedException('Refresh token has no expiration');
+    }
+    await this.prisma.authSession.update({
+      where: { id: sessionId },
+      data: {
+        refreshTokenHash: hashed,
+        expiresAt: new Date(decoded.exp * 1000),
+        lastUsedAt: new Date(),
+      },
     });
   }
 }

@@ -55,6 +55,10 @@ interface PartyPackage {
   duration: number;
   maxGuests: number;
   minDeposit?: number | null;
+  includedChildren: number;
+  maxChildren: number;
+  extraChildPrice: number;
+  externalFoodServiceFee: number;
   isActive: boolean;
 }
 
@@ -76,6 +80,11 @@ interface Reservation {
   areaId?: string | null;
   depositAmount: number;
   totalAmount: number;
+  packageQuantity: number;
+  externalFood: boolean;
+  extraChildren: number;
+  extraChildrenAmount: number;
+  externalFoodFee: number;
 }
 
 const statusConfig: Record<ReservationStatus, { label: string; badge: string; dot: string }> = {
@@ -126,6 +135,8 @@ const emptyReservationForm = {
   endTime: "14:00",
   areaId: "none",
   packageId: "none",
+  packageQuantity: "1",
+  externalFood: false,
   partySize: "10",
   totalAmount: "0",
   depositAmount: "0",
@@ -136,9 +147,10 @@ const emptyPackageForm = {
   name: "",
   description: "",
   price: "0",
-  duration: "120",
-  maxGuests: "10",
+  duration: "240",
+  maxGuests: "25",
   minDeposit: "0",
+  externalFoodServiceFee: "0",
 };
 
 export default function ReservationsPage() {
@@ -161,6 +173,16 @@ export default function ReservationsPage() {
   const [editingPackage, setEditingPackage] = useState<PartyPackage | null>(null);
   const [reservationForm, setReservationForm] = useState(emptyReservationForm);
   const [packageForm, setPackageForm] = useState(emptyPackageForm);
+  const selectedPackage = packages.find((item) => item.id === reservationForm.packageId);
+  const packageQuantity = Math.max(1, Number(reservationForm.packageQuantity || 1));
+  const extraChildren = selectedPackage
+    ? Math.max(0, Number(reservationForm.partySize || 0) - selectedPackage.includedChildren * packageQuantity)
+    : 0;
+  const calculatedReservationTotal = selectedPackage
+    ? Number(selectedPackage.price) * packageQuantity +
+      extraChildren * Number(selectedPackage.extraChildPrice) +
+      (reservationForm.externalFood ? Number(selectedPackage.externalFoodServiceFee) : 0)
+    : Number(reservationForm.totalAmount || 0);
 
   const visibleDays = useMemo(() => {
     if (mode === "day") return [selectedDate];
@@ -236,6 +258,8 @@ export default function ReservationsPage() {
         endTime: toTimeInput(end),
         areaId: reservation.areaId ?? reservation.area?.id ?? "none",
         packageId: reservation.packageId ?? reservation.package?.id ?? "none",
+        packageQuantity: String(reservation.packageQuantity ?? 1),
+        externalFood: reservation.externalFood ?? false,
         partySize: String(reservation.partySize),
         totalAmount: String(Number(reservation.totalAmount ?? 0)),
         depositAmount: String(Number(reservation.depositAmount ?? 0)),
@@ -258,7 +282,7 @@ export default function ReservationsPage() {
         endTime: toTimeInput(end),
         totalAmount: selected ? String(Number(selected.price)) : prev.totalAmount,
         depositAmount: selected?.minDeposit ? String(Number(selected.minDeposit)) : prev.depositAmount,
-        partySize: selected ? String(selected.maxGuests) : prev.partySize,
+        partySize: selected ? String(selected.includedChildren) : prev.partySize,
       };
     });
   };
@@ -275,8 +299,10 @@ export default function ReservationsPage() {
       endTime: new Date(`${reservationForm.reservedDate}T${reservationForm.endTime}`).toISOString(),
       areaId: reservationForm.areaId === "none" ? undefined : reservationForm.areaId,
       packageId: reservationForm.packageId === "none" ? undefined : reservationForm.packageId,
+      packageQuantity: Number(reservationForm.packageQuantity),
+      externalFood: reservationForm.externalFood,
       partySize: Number(reservationForm.partySize),
-      totalAmount: Number(reservationForm.totalAmount),
+      totalAmount: calculatedReservationTotal,
       depositAmount: Number(reservationForm.depositAmount),
       notes: reservationForm.notes || undefined,
     };
@@ -316,6 +342,7 @@ export default function ReservationsPage() {
         duration: String(partyPackage.duration),
         maxGuests: String(partyPackage.maxGuests),
         minDeposit: String(Number(partyPackage.minDeposit ?? 0)),
+        externalFoodServiceFee: String(Number(partyPackage.externalFoodServiceFee ?? 0)),
       });
     } else {
       setEditingPackage(null);
@@ -334,6 +361,7 @@ export default function ReservationsPage() {
       duration: Number(packageForm.duration),
       maxGuests: Number(packageForm.maxGuests),
       minDeposit: Number(packageForm.minDeposit || 0),
+      externalFoodServiceFee: Number(packageForm.externalFoodServiceFee || 0),
     };
     try {
       if (editingPackage) {
@@ -543,12 +571,12 @@ export default function ReservationsPage() {
               <div className="space-y-1.5"><Label>Responsable</Label><Input value={reservationForm.contactName} onChange={(event) => setReservationForm((prev) => ({ ...prev, contactName: event.target.value }))} /></div>
               <div className="space-y-1.5"><Label>Telefono</Label><Input value={reservationForm.contactPhone} onChange={(event) => setReservationForm((prev) => ({ ...prev, contactPhone: event.target.value }))} /></div>
               <div className="space-y-1.5"><Label>Email</Label><Input type="email" value={reservationForm.contactEmail} onChange={(event) => setReservationForm((prev) => ({ ...prev, contactEmail: event.target.value }))} /></div>
-              <div className="space-y-1.5"><Label>Ninos estimados</Label><Input type="number" min={0} value={reservationForm.partySize} onChange={(event) => setReservationForm((prev) => ({ ...prev, partySize: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Niños (máximo 25)</Label><Input type="number" min={0} max={25} value={reservationForm.partySize} onChange={(event) => setReservationForm((prev) => ({ ...prev, partySize: event.target.value }))} /></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5"><Label>Fecha</Label><Input type="date" value={reservationForm.reservedDate} onChange={(event) => setReservationForm((prev) => ({ ...prev, reservedDate: event.target.value }))} /></div>
               <div className="space-y-1.5"><Label>Inicio</Label><Input type="time" value={reservationForm.startTime} onChange={(event) => setReservationForm((prev) => ({ ...prev, startTime: event.target.value }))} /></div>
-              <div className="space-y-1.5"><Label>Fin</Label><Input type="time" value={reservationForm.endTime} onChange={(event) => setReservationForm((prev) => ({ ...prev, endTime: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Fin</Label><Input type="time" value={reservationForm.endTime} disabled={Boolean(selectedPackage)} onChange={(event) => setReservationForm((prev) => ({ ...prev, endTime: event.target.value }))} /><p className="text-xs text-muted-foreground">Las fiestas duran 4 horas.</p></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -572,10 +600,17 @@ export default function ReservationsPage() {
                 </Select>
               </div>
             </div>
+            {selectedPackage && (
+              <div className="grid gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2">
+                <div className="space-y-1.5"><Label>Cantidad de paquetes</Label><Input type="number" min={1} value={reservationForm.packageQuantity} onChange={(event) => setReservationForm((prev) => ({ ...prev, packageQuantity: event.target.value }))} /></div>
+                <label className="flex min-h-11 items-center gap-3 rounded-md border bg-background px-3 text-sm"><input type="checkbox" className="h-5 w-5" checked={reservationForm.externalFood} onChange={(event) => setReservationForm((prev) => ({ ...prev, externalFood: event.target.checked }))} />Alimentos externos</label>
+                <div className="sm:col-span-2 text-sm text-muted-foreground">Incluye {selectedPackage.includedChildren * packageQuantity} niños. Extra: {extraChildren} × {formatCurrency(Number(selectedPackage.extraChildPrice))}. Cuota alimentos externos: {formatCurrency(Number(selectedPackage.externalFoodServiceFee))}.</div>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-3">
-              <div className="space-y-1.5"><Label>Total</Label><Input type="number" min={0} value={reservationForm.totalAmount} onChange={(event) => setReservationForm((prev) => ({ ...prev, totalAmount: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Total</Label><Input type="number" min={0} value={calculatedReservationTotal} disabled={Boolean(selectedPackage)} onChange={(event) => setReservationForm((prev) => ({ ...prev, totalAmount: event.target.value }))} /></div>
               <div className="space-y-1.5"><Label>Anticipo</Label><Input type="number" min={0} value={reservationForm.depositAmount} onChange={(event) => setReservationForm((prev) => ({ ...prev, depositAmount: event.target.value }))} /></div>
-              <div className="space-y-1.5"><Label>Saldo</Label><div className="flex h-10 items-center rounded-md border bg-muted px-3 text-sm font-semibold">{formatCurrency(Math.max(0, Number(reservationForm.totalAmount || 0) - Number(reservationForm.depositAmount || 0)))}</div></div>
+              <div className="space-y-1.5"><Label>Saldo</Label><div className="flex h-10 items-center rounded-md border bg-muted px-3 text-sm font-semibold">{formatCurrency(Math.max(0, calculatedReservationTotal - Number(reservationForm.depositAmount || 0)))}</div></div>
             </div>
             <div className="space-y-1.5"><Label>Notas</Label><Textarea value={reservationForm.notes} onChange={(event) => setReservationForm((prev) => ({ ...prev, notes: event.target.value }))} /></div>
             {editingReservation && (
@@ -604,10 +639,12 @@ export default function ReservationsPage() {
             <div className="space-y-1.5"><Label>Descripcion</Label><Textarea value={packageForm.description} onChange={(event) => setPackageForm((prev) => ({ ...prev, description: event.target.value }))} /></div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5"><Label>Precio</Label><Input type="number" min={0} value={packageForm.price} onChange={(event) => setPackageForm((prev) => ({ ...prev, price: event.target.value }))} /></div>
-              <div className="space-y-1.5"><Label>Duracion fija</Label><Input type="number" min={30} value={packageForm.duration} onChange={(event) => setPackageForm((prev) => ({ ...prev, duration: event.target.value }))} /></div>
-              <div className="space-y-1.5"><Label>Limite de ninos</Label><Input type="number" min={1} value={packageForm.maxGuests} onChange={(event) => setPackageForm((prev) => ({ ...prev, maxGuests: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Duración fija</Label><Input value="4 horas" disabled /></div>
+              <div className="space-y-1.5"><Label>Límite de niños</Label><Input value="25" disabled /></div>
               <div className="space-y-1.5"><Label>Anticipo minimo</Label><Input type="number" min={0} value={packageForm.minDeposit} onChange={(event) => setPackageForm((prev) => ({ ...prev, minDeposit: event.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>Cuota alimentos externos</Label><Input type="number" min={0} value={packageForm.externalFoodServiceFee} onChange={(event) => setPackageForm((prev) => ({ ...prev, externalFoodServiceFee: event.target.value }))} /></div>
             </div>
+            <p className="text-xs text-muted-foreground">Cada paquete incluye 15 niños. Del niño 16 al 25 se cobran $150 por niño adicional.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPackageOpen(false)}>Cancelar</Button>

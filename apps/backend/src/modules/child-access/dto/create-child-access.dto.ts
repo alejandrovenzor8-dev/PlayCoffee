@@ -69,3 +69,28 @@ export class CheckoutChildAccessDto {
   @ApiPropertyOptional() @IsString() @IsOptional() guardianName?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() guardianPhone?: string;
 }
+
+export class UpdateChildAccessDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() childName?: string;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(17)
+  @IsOptional()
+  @Type(() => Number)
+  childAge?: number;
+  @ApiPropertyOptional() @IsString() @IsOptional() guardianName?: string;
+  @ApiPropertyOptional()
+  @IsString()
+  @Matches(/^[0-9+()\-\s]{7,20}$/)
+  @IsOptional()
+  guardianPhone?: string;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(60)
+  @IsOptional()
+  @Type(() => Number)
+  contractedMinutes?: number;
+  @ApiPropertyOptional() @IsString() @IsOptional() braceletId?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() notes?: string;
+}

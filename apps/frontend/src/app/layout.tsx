@@ -3,8 +3,16 @@ import { Providers } from "@/components/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Play Coffee OS",
-  description: "Sistema operativo profesional para cafeterías con área infantil",
+  title: "PlayCoffee OS",
+  description:
+    "Sistema operativo profesional para cafeterías con área infantil",
+  applicationName: "PlayCoffee OS",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "PlayCoffee",
+  },
+  formatDetection: { telephone: false },
 };
 
 export default function RootLayout({

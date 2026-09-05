@@ -429,7 +429,7 @@ export default function TablesPage() {
       )}
 
       <Dialog open={commanderOpen} onOpenChange={setCommanderOpen}>
-        <DialogContent className="max-h-[92vh] overflow-hidden sm:max-w-5xl">
+        <DialogContent className="max-h-[calc(100dvh-0.5rem)] overflow-y-auto sm:max-w-5xl lg:max-h-[92vh] lg:overflow-hidden">
           <DialogHeader>
             <DialogTitle>
               Mesa {selectedOperationalTable?.number}
@@ -437,7 +437,7 @@ export default function TablesPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid min-h-[620px] gap-4 overflow-hidden lg:grid-cols-[1fr_360px]">
+          <div className="grid min-h-0 gap-4 lg:min-h-[620px] lg:grid-cols-[1fr_360px] lg:overflow-hidden">
             <div className="flex min-h-0 flex-col rounded-lg border">
               <div className="border-b p-3">
                 <div className="relative">
@@ -450,7 +450,7 @@ export default function TablesPage() {
                   />
                 </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="max-h-[45dvh] min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-none">
                 {productsLoading ? (
                   <div className="flex h-full items-center justify-center">
                     <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
@@ -522,7 +522,7 @@ export default function TablesPage() {
                 )}
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="max-h-[40dvh] min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-none">
                 {!displayOrder && draftItems.length === 0 ? (
                   <div className="rounded-lg border border-dashed bg-white p-5 text-center text-sm text-muted-foreground">
                     Mesa libre. Agrega productos o abre la mesa para crear la orden.

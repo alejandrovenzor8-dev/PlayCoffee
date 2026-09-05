@@ -9,6 +9,7 @@ export interface JwtPayload {
   email: string;
   role: string;
   branchId?: string;
+  sid?: string;
 }
 
 @Injectable()
@@ -42,6 +43,6 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    return user;
+    return { ...user, sessionId: payload.sid };
   }
 }

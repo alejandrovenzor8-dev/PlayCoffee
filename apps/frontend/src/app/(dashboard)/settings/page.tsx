@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,42 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Building2, Coffee, MapPin, Clock, Bell, Shield, Save, Loader2 } from "lucide-react";
+import { Building2, Coffee, MapPin, Clock, Bell, Shield, Save, Loader2, Printer } from "lucide-react";
+import { paymentsApi, printApi } from "@/lib/api";
 
 export default function SettingsPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
+  const [printMessage, setPrintMessage] = useState<string | null>(null);
+  const [printSettings, setPrintSettings] = useState({
+    cashierPrinter: "",
+    kitchenPrinter: "",
+    barPrinter: "",
+    width: "80mm" as "58mm" | "80mm",
+    autoKitchen: true,
+    autoBar: true,
+    autoCustomer: true,
+  });
+
+  useEffect(() => {
+    printApi.getConfig().then(setPrintSettings).catch(() => {
+      setPrintMessage("No se pudo cargar la configuración de impresoras.");
+    });
+  }, []);
+
+  const handlePrintSave = async () => {
+    setSaving(true);
+    setPrintMessage(null);
+    try {
+      const saved = await printApi.updateConfig(printSettings);
+      setPrintSettings(saved);
+      setPrintMessage("Configuración de impresoras guardada.");
+    } catch {
+      setPrintMessage("No se pudo guardar. Usa destinos tcp://IP:9100 o windows:///Nombre.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const [branchSettings, setBranchSettings] = useState({
     name: "Play Coffee - Sucursal Centro",
@@ -35,7 +66,19 @@ export default function SettingsPage() {
     printReceipt: true,
     tipEnabled: true,
     defaultTip: "10",
+    tipPercentages: "10, 15, 20",
   });
+
+  useEffect(() => {
+    paymentsApi.getConfig().then((config) => {
+      setPosSettings((settings) => ({
+        ...settings,
+        tipEnabled: config.tipEnabled,
+        defaultTip: String(config.defaultTipPercentage),
+        tipPercentages: config.tipPercentages.join(", "),
+      }));
+    }).catch(() => undefined);
+  }, []);
 
   const [childSettings, setChildSettings] = useState({
     maxDefaultMinutes: "120",
@@ -54,8 +97,18 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setSaving(false);
+    try {
+      await paymentsApi.updateConfig({
+        tipEnabled: posSettings.tipEnabled,
+        defaultTipPercentage: Number(posSettings.defaultTip),
+        tipPercentages: posSettings.tipPercentages
+          .split(",")
+          .map((value) => Number(value.trim()))
+          .filter((value) => Number.isInteger(value)),
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -68,6 +121,10 @@ export default function SettingsPage() {
         <TabsTrigger value="pos" className="gap-2">
           <Coffee className="h-4 w-4" />
           POS
+        </TabsTrigger>
+        <TabsTrigger value="printing" className="gap-2">
+          <Printer className="h-4 w-4" />
+          Impresoras
         </TabsTrigger>
         <TabsTrigger value="areas" className="gap-2" onClick={() => router.push("/settings/areas")}>
           <MapPin className="h-4 w-4" />
@@ -159,6 +216,67 @@ export default function SettingsPage() {
         </Card>
       </TabsContent>
 
+      <TabsContent value="printing" className="space-y-6">
+        <div className="flex justify-end">
+          <Button onClick={handlePrintSave} disabled={saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Guardar impresoras
+          </Button>
+        </div>
+        {printMessage && <div className="rounded-lg border p-3 text-sm">{printMessage}</div>}
+        <Card>
+          <CardHeader>
+            <CardTitle>Impresión local ESC/POS</CardTitle>
+            <CardDescription>Asigna una impresora a cada estación. Las impresoras de red normalmente usan el puerto 9100.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[
+              ["cashierPrinter", "Caja", "tcp://192.168.1.61:9100"],
+              ["kitchenPrinter", "Cocina", "tcp://192.168.1.62:9100"],
+              ["barPrinter", "Barra", "windows:///EPSON Barra"],
+            ].map(([key, label, placeholder]) => (
+              <div className="space-y-1.5" key={key}>
+                <Label>{label}</Label>
+                <Input
+                  value={printSettings[key as "cashierPrinter" | "kitchenPrinter" | "barPrinter"]}
+                  placeholder={placeholder}
+                  onChange={(event) => setPrintSettings((settings) => ({ ...settings, [key]: event.target.value }))}
+                />
+              </div>
+            ))}
+            <div className="space-y-1.5">
+              <Label>Ancho del papel</Label>
+              <Select value={printSettings.width} onValueChange={(width: "58mm" | "80mm") => setPrintSettings((settings) => ({ ...settings, width }))}>
+                <SelectTrigger className="max-w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="80mm">80 mm</SelectItem>
+                  <SelectItem value="58mm">58 mm</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-4 border-t pt-4">
+              <p className="text-sm font-medium">Impresión automática</p>
+              {[
+                ["autoKitchen", "Cocina", "Al enviar productos nuevos preparados en cocina"],
+                ["autoBar", "Barra", "Al enviar productos nuevos preparados en barra"],
+                ["autoCustomer", "Ticket de cliente", "Cuando la orden queda completamente pagada"],
+              ].map(([key, label, description]) => (
+                <div className="flex items-start justify-between gap-4" key={key}>
+                  <div>
+                    <p className="text-sm font-medium">{label}</p>
+                    <p className="text-xs text-muted-foreground">{description}</p>
+                  </div>
+                  <Switch
+                    checked={printSettings[key as "autoKitchen" | "autoBar" | "autoCustomer"]}
+                    onCheckedChange={(checked) => setPrintSettings((settings) => ({ ...settings, [key]: checked }))}
+                  />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
       {/* POS Tab */}
       <TabsContent value="pos" className="space-y-6">
         <div className="flex justify-end">
@@ -193,10 +311,17 @@ export default function SettingsPage() {
               </div>
             ))}
             {posSettings.tipEnabled && (
-              <div className="space-y-1.5">
-                <Label>Propina predeterminada (%)</Label>
-                <Input type="number" className="max-w-32" min={0} max={100} value={posSettings.defaultTip}
-                  onChange={(e) => setPosSettings((s) => ({ ...s, defaultTip: e.target.value }))} />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Propina predeterminada (%)</Label>
+                  <Input type="number" min={0} max={100} value={posSettings.defaultTip}
+                    onChange={(e) => setPosSettings((s) => ({ ...s, defaultTip: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Porcentajes sugeridos</Label>
+                  <Input value={posSettings.tipPercentages} placeholder="10, 15, 20"
+                    onChange={(e) => setPosSettings((s) => ({ ...s, tipPercentages: e.target.value }))} />
+                </div>
               </div>
             )}
           </CardContent>
@@ -302,7 +427,8 @@ export default function SettingsPage() {
                   { role: "ADMIN", desc: "Acceso total" },
                   { role: "MANAGER", desc: "Reportes y configuración" },
                   { role: "CASHIER", desc: "POS y pagos" },
-                  { role: "WAITER", desc: "Mesas y órdenes" },
+                  { role: "WAITER", desc: "Mesas, catálogo y órdenes" },
+                  { role: "COOK", desc: "Comandero y consulta de catálogo" },
                   { role: "KITCHEN", desc: "Comandero de cocina" },
                 ].map(({ role, desc }) => (
                   <div key={role} className="flex items-center gap-2 rounded-md bg-background px-3 py-2 border">

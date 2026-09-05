@@ -40,7 +40,7 @@ import {
   UserPlus,
 } from "lucide-react";
 
-type AccessMode = "HOURLY" | "FREE";
+type AccessMode = "HOURLY";
 type AccessStatus = "ACTIVE" | "WARNING" | "GRACE" | "OVERTIME" | "COMPLETED";
 
 interface ChildRecord {
@@ -58,6 +58,8 @@ interface ChildRecord {
   warningMinutes: number;
   graceMinutes: number;
   hourlyRate?: number;
+  extraHalfHourRate?: number;
+  siblingDiscountAmount?: number;
   freePrice?: number;
   baseAmount: number;
   extraAmount: number;
@@ -95,11 +97,6 @@ const statusConfig: Record<AccessStatus, { label: string; className: string }> =
 
 function calculateClientStatus(record: ChildRecord) {
   if (record.exitTime) return { ...record, runtimeStatus: "COMPLETED" as AccessStatus };
-  if (record.accessMode === "FREE") {
-    const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(record.entryTime).getTime()) / 60000));
-    return { ...record, elapsedMinutes, runtimeStatus: "ACTIVE" as AccessStatus };
-  }
-
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(record.entryTime).getTime()) / 60000));
   const contracted = record.contractedMinutes ?? record.maxDuration ?? 0;
   const remainingMinutes = Math.max(0, contracted - elapsedMinutes);
@@ -108,14 +105,14 @@ function calculateClientStatus(record: ChildRecord) {
 
   if (elapsedMinutes >= contracted + record.graceMinutes + 1) {
     runtimeStatus = "OVERTIME";
-    extraHours = Math.ceil((elapsedMinutes - contracted - record.graceMinutes) / 60);
+    extraHours = Math.ceil((elapsedMinutes - contracted) / 30);
   } else if (elapsedMinutes > contracted) {
     runtimeStatus = "GRACE";
   } else if (remainingMinutes <= record.warningMinutes) {
     runtimeStatus = "WARNING";
   }
 
-  const calculatedExtraAmount = extraHours * Number(record.hourlyRate ?? 0);
+  const calculatedExtraAmount = extraHours * Number(record.extraHalfHourRate ?? 49);
   return {
     ...record,
     elapsedMinutes,
@@ -183,6 +180,7 @@ export default function ChildrenPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<ChildRecord | null>(null);
   const [checkoutRecord, setCheckoutRecord] = useState<ChildRecord | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState<any | null>(null);
@@ -193,8 +191,6 @@ export default function ChildrenPage() {
     guardianPhone: "",
     accessMode: "HOURLY" as AccessMode,
     contractedMinutes: "60",
-    hourlyRate: "120",
-    freePrice: "0",
     orderMode: "new" as "new" | "existing",
     orderId: "",
     notes: "",
@@ -213,8 +209,6 @@ export default function ChildrenPage() {
       guardianPhone: "",
       accessMode: "HOURLY",
       contractedMinutes: "60",
-      hourlyRate: "120",
-      freePrice: "0",
       orderMode: "new",
       orderId: "",
       notes: "",
@@ -269,7 +263,7 @@ export default function ChildrenPage() {
     setIsSubmitting(true);
     setLoadError(null);
     try {
-      await childAccessApi.register({
+      const payload = {
         childName: form.childName,
         childAge: form.childAge ? Number(form.childAge) : undefined,
         guardianName: form.guardianName,
@@ -277,12 +271,23 @@ export default function ChildrenPage() {
         accessMode: form.accessMode,
         contractedMinutes: form.accessMode === "HOURLY" ? Number(form.contractedMinutes) : undefined,
         maxDuration: form.accessMode === "HOURLY" ? Number(form.contractedMinutes) : undefined,
-        hourlyRate: form.accessMode === "HOURLY" ? Number(form.hourlyRate) : undefined,
-        freePrice: form.accessMode === "FREE" ? Number(form.freePrice) : undefined,
         orderId: form.orderMode === "existing" ? form.orderId : undefined,
         notes: form.notes || undefined,
-      });
+      };
+      if (editingRecord) {
+        await childAccessApi.update(editingRecord.id, {
+          childName: form.childName,
+          childAge: form.childAge ? Number(form.childAge) : undefined,
+          guardianName: form.guardianName,
+          guardianPhone: form.guardianPhone || undefined,
+          contractedMinutes: Number(form.contractedMinutes),
+          notes: form.notes || undefined,
+        }, branchId);
+      } else {
+        await childAccessApi.register(payload);
+      }
       setRegisterOpen(false);
+      setEditingRecord(null);
       resetForm();
       loadActive();
       loadOpenOrders();
@@ -367,7 +372,7 @@ export default function ChildrenPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold">{child.childName}</p>
-                      <p className="text-xs text-muted-foreground">{child.childAge ? `${child.childAge} años · ` : ""}{child.accessMode === "FREE" ? "Libre" : "Por hora"}</p>
+                      <p className="text-xs text-muted-foreground">{child.childAge ? `${child.childAge} años · ` : ""}Tarifa por tiempo</p>
                     </div>
                     <Badge variant="outline" className={cn("text-xs", cfg.className)}>{cfg.label}</Badge>
                   </div>
@@ -383,6 +388,21 @@ export default function ChildrenPage() {
                   </div>
                   {canManage && (
                     <div className="grid gap-2">
+                      <Button variant="outline" size="sm" className="w-full" onClick={() => {
+                        setEditingRecord(child);
+                        setForm({
+                          childName: child.childName,
+                          childAge: child.childAge ? String(child.childAge) : "",
+                          guardianName: child.guardianName,
+                          guardianPhone: child.guardianPhone ?? "",
+                          accessMode: "HOURLY",
+                          contractedMinutes: String(child.contractedMinutes ?? 60),
+                          orderMode: child.orderId ? "existing" : "new",
+                          orderId: child.orderId ?? "",
+                          notes: child.notes ?? "",
+                        });
+                        setRegisterOpen(true);
+                      }}>Corregir registro</Button>
                       <Button variant="outline" size="sm" className="w-full" onClick={() => {
                         setCheckoutRecord(child);
                         setCheckoutResult(null);
@@ -407,7 +427,7 @@ export default function ChildrenPage() {
 
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>Registrar ingreso</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingRecord ? "Corregir registro" : "Registrar ingreso"}</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5"><Label>Nombre del niño</Label><Input value={form.childName} onChange={(e) => setForm((p) => ({ ...p, childName: e.target.value }))} /></div>
@@ -415,22 +435,9 @@ export default function ChildrenPage() {
               <div className="space-y-1.5"><Label>Tutor</Label><Input value={form.guardianName} onChange={(e) => setForm((p) => ({ ...p, guardianName: e.target.value }))} /></div>
               <div className="space-y-1.5"><Label>Teléfono</Label><Input value={form.guardianPhone} onChange={(e) => setForm((p) => ({ ...p, guardianPhone: e.target.value }))} /></div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label>Tipo</Label>
-                <Select value={form.accessMode} onValueChange={(value: AccessMode) => setForm((p) => ({ ...p, accessMode: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="HOURLY">Por hora</SelectItem><SelectItem value="FREE">Libre</SelectItem></SelectContent>
-                </Select>
-              </div>
-              {form.accessMode === "HOURLY" ? (
-                <>
-                  <div className="space-y-1.5"><Label>Minutos</Label><Input type="number" min={1} value={form.contractedMinutes} onChange={(e) => setForm((p) => ({ ...p, contractedMinutes: e.target.value }))} /></div>
-                  <div className="space-y-1.5"><Label>Precio/hora</Label><Input type="number" min={0} value={form.hourlyRate} onChange={(e) => setForm((p) => ({ ...p, hourlyRate: e.target.value }))} /></div>
-                </>
-              ) : (
-                <div className="space-y-1.5 sm:col-span-2"><Label>Precio libre</Label><Input type="number" min={0} value={form.freePrice} onChange={(e) => setForm((p) => ({ ...p, freePrice: e.target.value }))} /></div>
-              )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5"><Label>Tiempo contratado</Label><Select value={form.contractedMinutes} onValueChange={(value) => setForm((p) => ({ ...p, contractedMinutes: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[60,90,120,150,180,210,240].map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{minutes === 60 ? "1 hora · $99" : `${minutes} min · $${99 + ((minutes - 60) / 30) * 49}`}</SelectItem>)}</SelectContent></Select></div>
+              <div className="rounded-lg border bg-muted p-3 text-sm"><p className="font-medium">Tarifa fija</p><p className="text-muted-foreground">1 hora $99 · cada 30 min adicionales $49</p><p className="mt-1 text-xs">Segundo hermano y siguientes: 15% de descuento.</p></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -463,9 +470,9 @@ export default function ChildrenPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRegisterOpen(false)}>Cancelar</Button>
-            <Button onClick={handleRegister} disabled={!form.childName || !form.guardianName || (form.orderMode === "existing" && !form.orderId) || isSubmitting}>
+            <Button onClick={handleRegister} disabled={!form.childName || !form.guardianName || (!editingRecord && form.orderMode === "existing" && !form.orderId) || isSubmitting}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Registrar
+              {editingRecord ? "Guardar corrección" : "Registrar"}
             </Button>
           </DialogFooter>
         </DialogContent>

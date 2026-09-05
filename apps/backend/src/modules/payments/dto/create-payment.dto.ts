@@ -1,4 +1,12 @@
-import { IsString, IsEnum, IsNumber, IsOptional, Min } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentMethod } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -21,5 +29,16 @@ export class CreatePaymentDto {
   @IsOptional()
   @Type(() => Number)
   tipAmount?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  @Type(() => Number)
+  tipPercentage?: number;
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  idempotencyKey?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() reference?: string;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Printer, X } from "lucide-react";
+import { Loader2, Printer, Send, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,8 @@ interface PrintableTicketProps {
   document: PrintTicketDocument | null;
   title: string;
   children: ReactNode;
+  onQueue?: () => Promise<void>;
+  isQueueing?: boolean;
 }
 
 export function PrintableTicket({
@@ -26,6 +28,8 @@ export function PrintableTicket({
   document,
   title,
   children,
+  onQueue,
+  isQueueing = false,
 }: PrintableTicketProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -47,6 +51,16 @@ export function PrintableTicket({
             <Printer className="mr-2 h-4 w-4" />
             Imprimir
           </Button>
+          {onQueue && (
+            <Button onClick={() => void onQueue()} disabled={isQueueing}>
+              {isQueueing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="mr-2 h-4 w-4" />
+              )}
+              Enviar a impresora
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

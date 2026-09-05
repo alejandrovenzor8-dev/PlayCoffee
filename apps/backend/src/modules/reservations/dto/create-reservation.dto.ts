@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ReservationStatus } from '@prisma/client';
@@ -22,6 +23,13 @@ export class CreateReservationDto {
   @ApiProperty() @IsString() contactPhone: string;
   @ApiPropertyOptional() @IsEmail() @IsOptional() contactEmail?: string;
   @ApiProperty() @IsNumber() @Min(0) @Type(() => Number) partySize: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  @Type(() => Number)
+  packageQuantity?: number;
+  @ApiPropertyOptional() @IsBoolean() @IsOptional() externalFood?: boolean;
   @ApiProperty() @IsDateString() reservedAt: string;
   @ApiPropertyOptional() @IsDateString() @IsOptional() endTime?: string;
   @ApiPropertyOptional()
@@ -66,6 +74,13 @@ export class UpdateReservationDto {
   @IsOptional()
   @Type(() => Number)
   partySize?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  @Type(() => Number)
+  packageQuantity?: number;
+  @ApiPropertyOptional() @IsBoolean() @IsOptional() externalFood?: boolean;
   @ApiPropertyOptional() @IsDateString() @IsOptional() reservedAt?: string;
   @ApiPropertyOptional() @IsDateString() @IsOptional() endTime?: string;
   @ApiPropertyOptional()
@@ -100,7 +115,12 @@ export class CreatePartyPackageDto {
   @ApiProperty() @IsString() name: string;
   @ApiPropertyOptional() @IsString() @IsOptional() description?: string;
   @ApiProperty() @IsNumber() @Min(0) @Type(() => Number) price: number;
-  @ApiProperty() @IsNumber() @Min(1) @Type(() => Number) maxGuests: number;
+  @ApiProperty()
+  @IsNumber()
+  @Min(25)
+  @Max(25)
+  @Type(() => Number)
+  maxGuests: number;
   @ApiProperty() @IsNumber() @Min(30) @Type(() => Number) duration: number;
   @ApiPropertyOptional()
   @IsNumber()
@@ -108,6 +128,12 @@ export class CreatePartyPackageDto {
   @IsOptional()
   @Type(() => Number)
   minDeposit?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  externalFoodServiceFee?: number;
   @ApiPropertyOptional() @IsBoolean() @IsOptional() isActive?: boolean;
 }
 
@@ -138,5 +164,11 @@ export class UpdatePartyPackageDto {
   @IsOptional()
   @Type(() => Number)
   minDeposit?: number;
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  externalFoodServiceFee?: number;
   @ApiPropertyOptional() @IsBoolean() @IsOptional() isActive?: boolean;
 }

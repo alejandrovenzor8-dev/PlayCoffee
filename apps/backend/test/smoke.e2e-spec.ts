@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentMethod, PrismaClient, UserRoleEnum } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
+import { randomUUID } from 'node:crypto';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
@@ -13,7 +14,11 @@ const smokeDatabaseUrl =
   process.env.SMOKE_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const describeSmoke = smokeDatabaseUrl ? describe : describe.skip;
 
-type AuthSession = { token: string; user: Record<string, unknown> };
+type AuthSession = {
+  token: string;
+  refreshToken: string;
+  user: Record<string, unknown>;
+};
 type SmokeOrderItem = {
   id: string;
   productId: string;
@@ -27,7 +32,7 @@ type SmokeOrder = {
   items: SmokeOrderItem[];
 };
 type SmokePaymentResponse = {
-  summary: { paymentStatus: string };
+  summary: { paymentStatus: string; total: number; totalPaid: number };
 };
 
 function responseData<T>(response: { body: { data: T } }) {
@@ -44,6 +49,8 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
   const branchBId = `${prefix}-branch-b`;
   const productAId = `${prefix}-product-a`;
   const productBId = `${prefix}-product-b`;
+  const inventoryProductId = `${prefix}-product-inventory`;
+  const inventoryItemId = `${prefix}-inventory-item`;
   const inactiveProductId = `${prefix}-product-inactive`;
   const deletedProductId = `${prefix}-product-deleted`;
   const tableAId = `${prefix}-table-a`;
@@ -191,6 +198,13 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         { id: productAId, name: `${prefix} Latte`, price: 65, isActive: true },
         { id: productBId, name: `${prefix} Muffin`, price: 40, isActive: true },
         {
+          id: inventoryProductId,
+          name: `${prefix} Bottled drink`,
+          price: 30,
+          isActive: true,
+          trackInventory: true,
+        },
+        {
           id: inactiveProductId,
           name: `${prefix} Inactive`,
           price: 10,
@@ -205,15 +219,30 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         },
       ],
     });
+    await db.inventoryItem.create({
+      data: {
+        id: inventoryItemId,
+        branchId: branchAId,
+        productId: inventoryProductId,
+        name: `${prefix} Bottled drink stock`,
+        currentStock: 10,
+        minStock: 2,
+        unit: 'pieza',
+      },
+    });
   }
 
   async function cleanupSmokeData(db: PrismaClient) {
+    await db.inventoryMovement.deleteMany({
+      where: { inventoryItemId },
+    });
     await db.payment.deleteMany({
       where: { order: { orderNumber: { startsWith: 'PC-' } } },
     });
     await db.order.deleteMany({
       where: { branchId: { in: [branchAId, branchBId] } },
     });
+    await db.inventoryItem.deleteMany({ where: { id: inventoryItemId } });
     await db.restaurantTable.deleteMany({
       where: { id: { in: [tableAId, tableBId] } },
     });
@@ -236,7 +265,13 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
     await db.product.deleteMany({
       where: {
         id: {
-          in: [productAId, productBId, inactiveProductId, deletedProductId],
+          in: [
+            productAId,
+            productBId,
+            inventoryProductId,
+            inactiveProductId,
+            deletedProductId,
+          ],
         },
       },
     });
@@ -252,10 +287,12 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
       .expect(200);
     const data = responseData<{
       accessToken: string;
+      refreshToken: string;
       user: Record<string, unknown>;
     }>(response);
     return {
       token: data.accessToken,
+      refreshToken: data.refreshToken,
       user: data.user,
     };
   }
@@ -327,6 +364,36 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
       await request(server)
         .get('/api/v1/reports/kpis')
         .set('Authorization', auth(adminA))
+        .expect(200);
+    });
+
+    it('keeps device sessions independent when one device logs out', async () => {
+      const deviceA = await login('cashier-a.smoke@example.com');
+      const deviceB = await login('cashier-a.smoke@example.com');
+
+      const refreshedA = await request(server)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: deviceA.refreshToken })
+        .expect(200);
+      const refreshedB = await request(server)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: deviceB.refreshToken })
+        .expect(200);
+      const rotatedA = responseData<{ refreshToken: string }>(refreshedA);
+      const rotatedB = responseData<{ refreshToken: string }>(refreshedB);
+
+      await request(server)
+        .post('/api/v1/auth/logout')
+        .set('Authorization', auth(deviceA))
+        .expect(204);
+
+      await request(server)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: rotatedA.refreshToken })
+        .expect(401);
+      await request(server)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: rotatedB.refreshToken })
         .expect(200);
     });
   });
@@ -569,6 +636,91 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         where: { id: tableAId },
       });
       expect(table?.status).toBe('AVAILABLE');
+    });
+
+    it('applies percentage tip to the order total', async () => {
+      const order = await createOrder(waiterA, {
+        items: [{ productId: productBId, quantity: 1 }],
+      });
+      const response = await request(server)
+        .post('/api/v1/payments')
+        .set('Authorization', auth(cashierA))
+        .send({
+          orderId: order.id,
+          method: PaymentMethod.CARD,
+          amount: 44,
+          tipPercentage: 10,
+          idempotencyKey: randomUUID(),
+        })
+        .expect(201);
+      const result = responseData<SmokePaymentResponse>(response);
+      expect(result.summary.total).toBe(44);
+      expect(result.summary.paymentStatus).toBe('PAID');
+      const updated = await prisma.order.findUnique({
+        where: { id: order.id },
+      });
+      expect(Number(updated?.tipAmount)).toBe(4);
+      expect(Number(updated?.total)).toBe(44);
+    });
+
+    it('returns the same payment for a repeated idempotency key', async () => {
+      const order = await createOrder(waiterA, {
+        items: [{ productId: productBId, quantity: 1 }],
+      });
+      const idempotencyKey = randomUUID();
+      const payload = {
+        orderId: order.id,
+        method: PaymentMethod.CARD,
+        amount: 20,
+        idempotencyKey,
+      };
+      const first = await request(server)
+        .post('/api/v1/payments')
+        .set('Authorization', auth(cashierA))
+        .send(payload)
+        .expect(201);
+      const second = await request(server)
+        .post('/api/v1/payments')
+        .set('Authorization', auth(cashierA))
+        .send(payload)
+        .expect(201);
+      expect(responseData<{ payment: { id: string } }>(second).payment.id).toBe(
+        responseData<{ payment: { id: string } }>(first).payment.id,
+      );
+      expect(await prisma.payment.count({ where: { orderId: order.id } })).toBe(
+        1,
+      );
+    });
+
+    it('discounts linked inventory exactly once when payment completes', async () => {
+      const order = await createOrder(waiterA, {
+        items: [{ productId: inventoryProductId, quantity: 2 }],
+      });
+      await pay(cashierA, order.id, 20);
+      expect(
+        Number(
+          (
+            await prisma.inventoryItem.findUnique({
+              where: { id: inventoryItemId },
+            })
+          )?.currentStock,
+        ),
+      ).toBe(10);
+      await pay(cashierA, order.id, 40);
+      expect(
+        Number(
+          (
+            await prisma.inventoryItem.findUnique({
+              where: { id: inventoryItemId },
+            })
+          )?.currentStock,
+        ),
+      ).toBe(8);
+      expect(
+        await prisma.inventoryMovement.count({
+          where: { inventoryItemId, reference: order.id },
+        }),
+      ).toBe(1);
     });
 
     it('rejects extra, overpaid and cancelled payments', async () => {

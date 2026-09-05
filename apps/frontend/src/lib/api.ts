@@ -16,6 +16,10 @@ function normalizeApiBaseUrl(url: string) {
 const BASE_URL = normalizeApiBaseUrl(getApiUrl());
 let refreshPromise: Promise<string | null> | null = null;
 
+export function getApiOrigin() {
+  return BASE_URL;
+}
+
 function clearClientAuth() {
   if (typeof window !== "undefined") {
     localStorage.removeItem("accessToken");
@@ -43,7 +47,8 @@ export function getApiErrorMessage(error: unknown, fallback: string) {
       | { message?: string | string[]; error?: string }
       | undefined;
     if (Array.isArray(data?.message)) return data.message.join(" ");
-    if (typeof data?.message === "string" && data.message.trim()) return data.message;
+    if (typeof data?.message === "string" && data.message.trim())
+      return data.message;
     if (typeof data?.error === "string" && data.error.trim()) return data.error;
   }
 
@@ -53,7 +58,9 @@ export function getApiErrorMessage(error: unknown, fallback: string) {
 // Attach access token to every request
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (typeof window !== "undefined") {
-    const token = useAuthStore.getState().accessToken ?? localStorage.getItem("accessToken");
+    const token =
+      useAuthStore.getState().accessToken ??
+      localStorage.getItem("accessToken");
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -65,12 +72,15 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const original = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean;
+    };
 
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
       const refreshToken =
-        useAuthStore.getState().refreshToken ?? localStorage.getItem("refreshToken");
+        useAuthStore.getState().refreshToken ??
+        localStorage.getItem("refreshToken");
 
       if (refreshToken) {
         try {
@@ -80,11 +90,9 @@ api.interceptors.response.use(
               const tokens = data.data;
               const currentUser = useAuthStore.getState().user;
               if (!currentUser) return null;
-              useAuthStore.getState().setAuth(
-                currentUser,
-                tokens.accessToken,
-                tokens.refreshToken,
-              );
+              useAuthStore
+                .getState()
+                .setAuth(currentUser, tokens.accessToken, tokens.refreshToken);
               return tokens.accessToken as string;
             })
             .catch(() => {
@@ -97,7 +105,10 @@ api.interceptors.response.use(
 
           const accessToken = await refreshPromise;
           if (!accessToken) {
-            if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+            if (
+              typeof window !== "undefined" &&
+              window.location.pathname !== "/login"
+            ) {
               window.location.href = "/login";
             }
             return Promise.reject(error);
@@ -109,20 +120,26 @@ api.interceptors.response.use(
           return api(original);
         } catch {
           clearClientAuth();
-          if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          if (
+            typeof window !== "undefined" &&
+            window.location.pathname !== "/login"
+          ) {
             window.location.href = "/login";
           }
         }
       } else {
         clearClientAuth();
-        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        if (
+          typeof window !== "undefined" &&
+          window.location.pathname !== "/login"
+        ) {
           window.location.href = "/login";
         }
       }
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 // Typed helpers
@@ -136,7 +153,7 @@ export const authApi = {
     api.post("/auth/refresh", { refreshToken }).then((r) => r.data.data),
 };
 
-export type UserRole = "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER";
+export type UserRole = "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER" | "COOK";
 
 export type UserPayload = {
   email: string;
@@ -177,14 +194,18 @@ export type ProductPayload = {
 };
 
 export const productsApi = {
-  getAll: (params?: { categoryId?: string; search?: string; isActive?: string }) =>
-    api.get("/products", { params }).then((r) => r.data.data),
+  getAll: (params?: {
+    categoryId?: string;
+    search?: string;
+    isActive?: string;
+  }) => api.get("/products", { params }).then((r) => r.data.data),
   getCategories: () => api.get("/products/categories").then((r) => r.data.data),
   create: (data: ProductPayload) =>
     api.post("/products", data).then((r) => r.data.data),
   update: (id: string, data: Partial<ProductPayload>) =>
     api.patch(`/products/${id}`, data).then((r) => r.data.data),
-  delete: (id: string) => api.delete(`/products/${id}`).then((r) => r.data.data),
+  delete: (id: string) =>
+    api.delete(`/products/${id}`).then((r) => r.data.data),
 };
 
 export const ordersApi = {
@@ -198,7 +219,9 @@ export const ordersApi = {
     api.patch(`/orders/${id}`, data).then((r) => r.data.data),
   cancel: (id: string) => api.delete(`/orders/${id}`),
   getDailySummary: (branchId: string, date?: string) =>
-    api.get("/orders/summary", { params: { branchId, date } }).then((r) => r.data.data),
+    api
+      .get("/orders/summary", { params: { branchId, date } })
+      .then((r) => r.data.data),
 };
 
 export const tablesApi = {
@@ -212,10 +235,8 @@ export const tablesApi = {
     api.patch(`/tables/${id}/status`, { status }).then((r) => r.data.data),
   update: (id: string, data: unknown) =>
     api.patch(`/tables/${id}`, data).then((r) => r.data.data),
-  create: (data: unknown) =>
-    api.post("/tables", data).then((r) => r.data.data),
-  delete: (id: string) =>
-    api.delete(`/tables/${id}`).then((r) => r.data.data),
+  create: (data: unknown) => api.post("/tables", data).then((r) => r.data.data),
+  delete: (id: string) => api.delete(`/tables/${id}`).then((r) => r.data.data),
 };
 
 export const areasApi = {
@@ -223,33 +244,52 @@ export const areasApi = {
     api.get("/areas", { params: { branchId } }).then((r) => r.data.data),
   getActive: (branchId: string) =>
     api.get("/areas/active", { params: { branchId } }).then((r) => r.data.data),
-  getOne: (id: string) =>
-    api.get(`/areas/${id}`).then((r) => r.data.data),
+  getOne: (id: string) => api.get(`/areas/${id}`).then((r) => r.data.data),
   create: (branchId: string, data: unknown) =>
     api.post("/areas", data, { params: { branchId } }).then((r) => r.data.data),
   update: (id: string, data: unknown) =>
     api.patch(`/areas/${id}`, data).then((r) => r.data.data),
   reorder: (branchId: string, areaIds: string[]) =>
-    api.post("/areas/reorder", { areaIds }, { params: { branchId } }).then((r) => r.data.data),
+    api
+      .post("/areas/reorder", { areaIds }, { params: { branchId } })
+      .then((r) => r.data.data),
   toggleActive: (id: string) =>
     api.patch(`/areas/${id}/toggle-active`).then((r) => r.data.data),
-  delete: (id: string) =>
-    api.delete(`/areas/${id}`).then((r) => r.data.data),
+  delete: (id: string) => api.delete(`/areas/${id}`).then((r) => r.data.data),
 };
 
 export const paymentsApi = {
-  create: (data: unknown) => api.post("/payments", data).then((r) => r.data.data),
+  getConfig: () => api.get("/payments/config").then((r) => r.data.data),
+  updateConfig: (data: {
+    tipEnabled: boolean;
+    defaultTipPercentage: number;
+    tipPercentages: number[];
+  }) => api.put("/payments/config", data).then((r) => r.data.data),
+  create: (data: unknown) =>
+    api.post("/payments", data).then((r) => r.data.data),
   getByOrder: (orderId: string) =>
     api.get(`/payments/order/${orderId}`).then((r) => r.data.data),
 };
 
 export const printApi = {
+  getConfig: () => api.get("/print/config").then((r) => r.data.data),
+  updateConfig: (data: {
+    cashierPrinter: string;
+    kitchenPrinter: string;
+    barPrinter: string;
+    width: "58mm" | "80mm";
+    autoKitchen: boolean;
+    autoBar: boolean;
+    autoCustomer: boolean;
+  }) => api.put("/print/config", data).then((r) => r.data.data),
   customer: (orderId: string) =>
     api.get(`/print/order/${orderId}/customer`).then((r) => r.data.data),
   kitchen: (orderId: string) =>
     api.get(`/print/order/${orderId}/kitchen`).then((r) => r.data.data),
   bar: (orderId: string) =>
     api.get(`/print/order/${orderId}/bar`).then((r) => r.data.data),
+  queue: (orderId: string, type: "CUSTOMER" | "KITCHEN" | "BAR") =>
+    api.post(`/print/order/${orderId}/queue`, { type }).then((r) => r.data.data),
 };
 
 export const cashApi = {
@@ -267,12 +307,21 @@ export const cashApi = {
 
 export const childAccessApi = {
   getActive: (branchId?: string) =>
-    api.get("/child-access/active", { params: { branchId } }).then((r) => r.data.data),
+    api
+      .get("/child-access/active", { params: { branchId } })
+      .then((r) => r.data.data),
   getOverstaying: (branchId?: string) =>
-    api.get("/child-access/overstaying", { params: { branchId } }).then((r) => r.data.data),
-  register: (data: unknown) => api.post("/child-access", data).then((r) => r.data.data),
+    api
+      .get("/child-access/overstaying", { params: { branchId } })
+      .then((r) => r.data.data),
+  register: (data: unknown) =>
+    api.post("/child-access", data).then((r) => r.data.data),
+  update: (id: string, data: unknown, branchId?: string) =>
+    api.patch(`/child-access/${id}`, data, { params: { branchId } }).then((r) => r.data.data),
   checkout: (id: string, data: unknown, branchId?: string) =>
-    api.patch(`/child-access/${id}/checkout`, data, { params: { branchId } }).then((r) => r.data.data),
+    api
+      .patch(`/child-access/${id}/checkout`, data, { params: { branchId } })
+      .then((r) => r.data.data),
 };
 
 export const reservationsApi = {
@@ -280,36 +329,63 @@ export const reservationsApi = {
     api.get("/reservations", { params }).then((r) => r.data.data),
   calendar: (params?: { branchId?: string; start?: string; end?: string }) =>
     api.get("/reservations/calendar", { params }).then((r) => r.data.data),
-  availability: (params: { branchId?: string; date: string; areaId?: string; duration?: number }) =>
+  availability: (params: {
+    branchId?: string;
+    date: string;
+    areaId?: string;
+    duration?: number;
+  }) =>
     api.get("/reservations/availability", { params }).then((r) => r.data.data),
-  create: (data: unknown) => api.post("/reservations", data).then((r) => r.data.data),
+  create: (data: unknown) =>
+    api.post("/reservations", data).then((r) => r.data.data),
   update: (id: string, data: unknown) =>
     api.patch(`/reservations/${id}`, data).then((r) => r.data.data),
   updateStatus: (id: string, status: string) =>
-    api.patch(`/reservations/${id}/status`, { status }).then((r) => r.data.data),
+    api
+      .patch(`/reservations/${id}/status`, { status })
+      .then((r) => r.data.data),
 };
 
 export const partyPackagesApi = {
   getAll: (includeInactive = false) =>
-    api.get("/party-packages", { params: { includeInactive } }).then((r) => r.data.data),
-  create: (data: unknown) => api.post("/party-packages", data).then((r) => r.data.data),
+    api
+      .get("/party-packages", { params: { includeInactive } })
+      .then((r) => r.data.data),
+  create: (data: unknown) =>
+    api.post("/party-packages", data).then((r) => r.data.data),
   update: (id: string, data: unknown) =>
     api.patch(`/party-packages/${id}`, data).then((r) => r.data.data),
-  delete: (id: string) => api.delete(`/party-packages/${id}`).then((r) => r.data.data),
+  delete: (id: string) =>
+    api.delete(`/party-packages/${id}`).then((r) => r.data.data),
 };
 
 export const reportsApi = {
   getKpis: (branchId: string) =>
     api.get("/reports/kpis", { params: { branchId } }).then((r) => r.data.data),
   getSales: (branchId: string, from: string, to: string) =>
-    api.get("/reports/sales", { params: { branchId, from, to } }).then((r) => r.data.data),
-  getSummary: (params: { start?: string; end?: string; from?: string; to?: string; branchId?: string }) =>
-    api.get("/reports/summary", { params }).then((r) => r.data.data),
+    api
+      .get("/reports/sales", { params: { branchId, from, to } })
+      .then((r) => r.data.data),
+  getSummary: (params: {
+    start?: string;
+    end?: string;
+    from?: string;
+    to?: string;
+    branchId?: string;
+  }) => api.get("/reports/summary", { params }).then((r) => r.data.data),
   salesByDay: (params: { start?: string; end?: string; branchId?: string }) =>
     api.get("/reports/sales-by-day", { params }).then((r) => r.data.data),
-  salesByCategory: (params: { start?: string; end?: string; branchId?: string }) =>
+  salesByCategory: (params: {
+    start?: string;
+    end?: string;
+    branchId?: string;
+  }) =>
     api.get("/reports/sales-by-category", { params }).then((r) => r.data.data),
-  paymentMethods: (params: { start?: string; end?: string; branchId?: string }) =>
+  paymentMethods: (params: {
+    start?: string;
+    end?: string;
+    branchId?: string;
+  }) =>
     api.get("/reports/payment-methods", { params }).then((r) => r.data.data),
   peakHours: (params: { start?: string; end?: string; branchId?: string }) =>
     api.get("/reports/peak-hours", { params }).then((r) => r.data.data),
@@ -320,21 +396,28 @@ export const reportsApi = {
   reservations: (params: { start?: string; end?: string; branchId?: string }) =>
     api.get("/reports/reservations", { params }).then((r) => r.data.data),
   inventoryLowStock: (branchId?: string) =>
-    api.get("/reports/inventory-low-stock", { params: { branchId } }).then((r) => r.data.data),
+    api
+      .get("/reports/inventory-low-stock", { params: { branchId } })
+      .then((r) => r.data.data),
   cashShifts: (params: { start?: string; end?: string; branchId?: string }) =>
     api.get("/reports/cash-shifts", { params }).then((r) => r.data.data),
 };
 
 export const inventoryApi = {
   getAll: (search?: string, branchId?: string) =>
-    api.get("/inventory", { params: { search, branchId } }).then((r) => r.data.data),
+    api
+      .get("/inventory", { params: { search, branchId } })
+      .then((r) => r.data.data),
   getItems: (branchId?: string) =>
     api.get("/inventory", { params: { branchId } }).then((r) => r.data.data),
   getLowStock: (branchId?: string) =>
-    api.get("/inventory/low-stock", { params: { branchId } }).then((r) => r.data.data),
+    api
+      .get("/inventory/low-stock", { params: { branchId } })
+      .then((r) => r.data.data),
   getMovements: (params?: { itemId?: string; branchId?: string }) =>
     api.get("/inventory/movements", { params }).then((r) => r.data.data),
-  create: (data: unknown) => api.post("/inventory/items", data).then((r) => r.data.data),
+  create: (data: unknown) =>
+    api.post("/inventory/items", data).then((r) => r.data.data),
   update: (id: string, data: unknown) =>
     api.patch(`/inventory/items/${id}`, data).then((r) => r.data.data),
   addMovement: (data: unknown) =>

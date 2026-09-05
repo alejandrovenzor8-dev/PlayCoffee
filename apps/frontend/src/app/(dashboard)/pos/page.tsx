@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getApiErrorMessage, productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
@@ -48,6 +48,11 @@ type PosOrder = {
   total?: number;
   status?: string;
 };
+type PaymentConfig = {
+  tipEnabled: boolean;
+  defaultTipPercentage: number;
+  tipPercentages: number[];
+};
 
 const openOrderStatuses = ["PENDING", "CONFIRMED", "PREPARING", "READY", "DELIVERED"];
 
@@ -87,6 +92,13 @@ export default function PosPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linkedOrderId, setLinkedOrderId] = useState<string | null>(null);
+  const [paymentConfig, setPaymentConfig] = useState<PaymentConfig>({
+    tipEnabled: true,
+    defaultTipPercentage: 10,
+    tipPercentages: [10, 15, 20],
+  });
+  const [tipPercentage, setTipPercentage] = useState(10);
+  const paymentAttemptId = useRef<string | null>(null);
 
   const cart = useCartStore();
   const { user } = useAuthStore();
@@ -95,6 +107,13 @@ export default function PosPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setLinkedOrderId(params.get("orderId"));
+  }, []);
+
+  useEffect(() => {
+    paymentsApi.getConfig().then((config: PaymentConfig) => {
+      setPaymentConfig(config);
+      setTipPercentage(config.tipEnabled ? config.defaultTipPercentage : 0);
+    }).catch(() => undefined);
   }, []);
 
   const loadOperationalData = useCallback(() => {
@@ -190,7 +209,12 @@ export default function PosPage() {
   const selectedTable = tables.find((table) => table.id === cart.tableId);
   const selectedTableOpenOrder = getOpenTableOrder(selectedTable);
   const cartTotal = cart.total();
-  const payableTotal = paymentSummary?.total ?? currentOrder?.total ?? cartTotal;
+  const basePayableTotal = paymentSummary?.total ?? currentOrder?.total ?? cartTotal;
+  const canChangeTip = payments.length === 0 && paymentSummary?.paymentStatus !== "PARTIALLY_PAID";
+  const previewTipAmount = canChangeTip && paymentConfig.tipEnabled
+    ? Math.round(basePayableTotal * tipPercentage) / 100
+    : 0;
+  const payableTotal = paymentSummary?.total ?? basePayableTotal + previewTipAmount;
   const paidAmount = paymentSummary?.totalPaid ?? 0;
   const remainingAmount = paymentSummary?.remainingAmount ?? payableTotal;
   const cashReceived = Number(receivedAmount || 0);
@@ -329,14 +353,16 @@ export default function PosPage() {
     }
     setIsProcessing(true);
     setPaymentError(null);
+    let attemptedOrderId = currentOrder?.id ?? null;
     try {
       const order = await ensureOrder();
       if (!order) return;
+      attemptedOrderId = order.id;
 
       const numericAmount =
         paymentMethod === "CASH"
-          ? Number(receivedAmount || paymentAmount)
-          : Number(paymentAmount);
+          ? Number(receivedAmount || paymentAmount || remainingAmount)
+          : Number(paymentAmount || remainingAmount);
 
       if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
         setPaymentError("Ingresa un monto mayor a cero.");
@@ -353,13 +379,17 @@ export default function PosPage() {
           ? Math.min(numericAmount, remainingAmount)
           : numericAmount;
 
+      paymentAttemptId.current ??= crypto.randomUUID();
       const response = await paymentsApi.create({
         orderId: order.id,
         method: paymentMethod,
         amount: appliedAmount,
         receivedAmount: paymentMethod === "CASH" ? numericAmount : undefined,
         reference: paymentMethod === "CASH" ? undefined : reference || undefined,
+        tipPercentage: canChangeTip && paymentConfig.tipEnabled ? tipPercentage : undefined,
+        idempotencyKey: paymentAttemptId.current,
       });
+      paymentAttemptId.current = null;
 
       setPayments((current) => [...current, response.payment]);
       setPaymentSummary(response.summary);
@@ -382,14 +412,30 @@ export default function PosPage() {
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
       console.error(err);
-      setPaymentError("No se pudo registrar el pago. Revisa el saldo, la caja y la orden.");
+      const message = getApiErrorMessage(err, "No se pudo registrar el pago.");
+      if (attemptedOrderId) {
+        try {
+          const paymentInfo = await paymentsApi.getByOrder(attemptedOrderId);
+          setPayments(paymentInfo.payments ?? []);
+          setPaymentSummary(paymentInfo.summary);
+          setPaymentError(
+            paymentInfo.summary.paymentStatus === "PAID"
+              ? "El servidor confirmó que el pago sí fue registrado. No vuelvas a cobrar."
+              : `${message} El saldo fue actualizado; puedes reintentar con seguridad.`,
+          );
+        } catch {
+          setPaymentError(`${message} No fue posible confirmar el estado; conserva esta pantalla y reintenta cuando vuelva la conexión.`);
+        }
+      } else {
+        setPaymentError(message);
+      }
     } finally {
       setIsProcessing(false);
     }
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-4 -m-6 p-6">
+    <div className="flex min-h-full flex-col gap-4 lg:-m-6 lg:h-[calc(100vh-4rem)] lg:flex-row lg:p-6">
       {/* Product panel */}
       <div className="flex flex-1 flex-col min-w-0">
         <PageHeader
@@ -423,7 +469,7 @@ export default function PosPage() {
         </div>
 
         {/* Categories */}
-        <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:overflow-visible">
           <Button
             variant={!selectedCategory ? "default" : "outline"}
             size="sm"
@@ -463,7 +509,7 @@ export default function PosPage() {
                 key={product.id}
                 onClick={() => cart.addItem(product)}
                 disabled={Boolean(currentOrder) && !canAddExtrasToCurrentOrder}
-                className="group relative flex flex-col rounded-xl border bg-card p-4 text-left transition-all hover:border-blue-400 hover:shadow-md active:scale-95"
+              className="group relative flex min-h-32 flex-col rounded-xl border bg-card p-3 text-left transition-all hover:border-blue-400 hover:shadow-md active:scale-95 sm:p-4"
               >
                 {product.isFeatured && (
                   <Badge variant="default" className="absolute top-2 right-2 text-xs h-5">
@@ -487,7 +533,7 @@ export default function PosPage() {
       </div>
 
       {/* Cart panel */}
-      <div className="flex w-80 flex-col rounded-xl border bg-card shadow-sm">
+      <div className="flex w-full flex-col rounded-xl border bg-card shadow-sm lg:w-80 lg:shrink-0">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2">
             <ShoppingCart className="h-4 w-4" />
@@ -561,14 +607,14 @@ export default function PosPage() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => cart.updateQuantity(item.id, item.quantity - 1)}
-                    className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted"
+                    className="flex h-10 w-10 items-center justify-center rounded border hover:bg-muted lg:h-8 lg:w-8"
                   >
                     <Minus className="h-3 w-3" />
                   </button>
                   <span className="w-6 text-center font-bold text-sm">{item.quantity}</span>
                   <button
                     onClick={() => cart.updateQuantity(item.id, item.quantity + 1)}
-                    className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted"
+                    className="flex h-10 w-10 items-center justify-center rounded border hover:bg-muted lg:h-8 lg:w-8"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
@@ -577,7 +623,7 @@ export default function PosPage() {
                   <p className="font-semibold text-sm">{formatCurrency(item.totalPrice)}</p>
                   <button
                     onClick={() => cart.removeItem(item.id)}
-                    className="text-muted-foreground hover:text-destructive"
+                    className="flex h-10 w-10 items-center justify-center text-muted-foreground hover:text-destructive"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -665,6 +711,11 @@ export default function PosPage() {
             <div className="rounded-lg bg-muted p-4 text-center">
               <p className="text-sm text-muted-foreground">Total a cobrar</p>
               <p className="text-4xl font-bold mt-1 text-blue-600">{formatCurrency(payableTotal)}</p>
+              {previewTipAmount > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Consumo {formatCurrency(basePayableTotal)} + propina {formatCurrency(previewTipAmount)}
+                </p>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2 text-left">
                 <div className="rounded-lg border bg-background p-3">
                   <p className="text-xs text-muted-foreground">Pagado</p>
@@ -676,9 +727,50 @@ export default function PosPage() {
                 </div>
               </div>
             </div>
+            {paymentConfig.tipEnabled && canChangeTip && (
+              <div>
+                <p className="mb-2 text-sm font-medium">Propina</p>
+                <div className="flex flex-wrap gap-2">
+                  {[0, ...paymentConfig.tipPercentages].filter((value, index, values) => values.indexOf(value) === index).map((percentage) => (
+                    <Button
+                      key={percentage}
+                      type="button"
+                      size="sm"
+                      variant={tipPercentage === percentage ? "default" : "outline"}
+                      onClick={() => setTipPercentage(percentage)}
+                    >
+                      {percentage === 0 ? "Sin propina" : `${percentage}%`}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <p className="mb-2 text-sm font-medium">Dividir cuenta</p>
+              <div className="flex flex-wrap gap-2">
+                {[2, 3, 4].map((parts) => {
+                  const partAmount = Math.ceil((remainingAmount / parts) * 100) / 100;
+                  return (
+                    <Button
+                      key={parts}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setPaymentAmount(partAmount.toFixed(2));
+                        setReceivedAmount(partAmount.toFixed(2));
+                      }}
+                    >
+                      Entre {parts}: {formatCurrency(partAmount)}
+                    </Button>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">Registra cada parte con su propio método de pago.</p>
+            </div>
             <div>
               <p className="text-sm font-medium mb-2">Método de pago</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-3">
                 {(["CASH", "CARD", "TRANSFER"] as const).map((method) => (
                   <button
                     key={method}

@@ -16,6 +16,8 @@ import {
 } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { PrintService } from '../print/print.service';
+import { UpdatePaymentConfigDto } from './dto/update-payment-config.dto';
 
 type PaymentSummaryStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
@@ -43,7 +45,59 @@ export class PaymentsService {
     private prisma: PrismaService,
     private audit: AuditService,
     private realtime: RealtimeGateway,
+    private printService: PrintService,
   ) {}
+
+  async getPaymentConfig(branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const settings = await this.prisma.setting.findMany({
+      where: {
+        branchId,
+        key: {
+          in: ['tip_enabled', 'tip_default_percentage', 'tip_percentages'],
+        },
+      },
+    });
+    const values = new Map(
+      settings.map((setting) => [setting.key, setting.value]),
+    );
+    const percentages = (values.get('tip_percentages') ?? '10,15,20')
+      .split(',')
+      .map(Number)
+      .filter((value) => Number.isInteger(value) && value >= 0 && value <= 100);
+    return {
+      tipEnabled: values.get('tip_enabled') !== 'false',
+      defaultTipPercentage: Number(values.get('tip_default_percentage') ?? 10),
+      tipPercentages: percentages.length ? percentages : [10, 15, 20],
+    };
+  }
+
+  async updatePaymentConfig(
+    branchId: string | undefined,
+    dto: UpdatePaymentConfigDto,
+  ) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const percentages = [...new Set(dto.tipPercentages)].sort((a, b) => a - b);
+    if (!percentages.includes(dto.defaultTipPercentage)) {
+      percentages.push(dto.defaultTipPercentage);
+      percentages.sort((a, b) => a - b);
+    }
+    const entries = [
+      ['tip_enabled', String(dto.tipEnabled)],
+      ['tip_default_percentage', String(dto.defaultTipPercentage)],
+      ['tip_percentages', percentages.join(',')],
+    ] as const;
+    await this.prisma.$transaction(
+      entries.map(([key, value]) =>
+        this.prisma.setting.upsert({
+          where: { branchId_key: { branchId, key } },
+          create: { branchId, key, value, group: 'payment' },
+          update: { value, group: 'payment' },
+        }),
+      ),
+    );
+    return this.getPaymentConfig(branchId);
+  }
 
   async create(
     dto: CreatePaymentDto,
@@ -57,6 +111,13 @@ export class PaymentsService {
     }
     if (dto.amount <= 0)
       throw new BadRequestException('Payment amount must be greater than zero');
+    if (dto.idempotencyKey) {
+      const previous = await this.getIdempotentPayment(
+        dto.idempotencyKey,
+        branchId,
+      );
+      if (previous) return previous;
+    }
 
     const result = await this.prisma
       .$transaction(
@@ -96,9 +157,32 @@ export class PaymentsService {
             throw new BadRequestException('Order is already fully paid');
           }
 
+          let effectiveTotal = Number(order.total);
+          let appliedTip = 0;
+          if (dto.tipPercentage !== undefined) {
+            if (
+              order.payments.some(
+                (payment) => payment.status === PaymentStatus.COMPLETED,
+              )
+            ) {
+              throw new BadRequestException(
+                'La propina no puede cambiar después del primer pago',
+              );
+            }
+            appliedTip = this.roundMoney(
+              (Number(order.subtotal) - Number(order.discountAmount)) *
+                (dto.tipPercentage / 100),
+            );
+            effectiveTotal = this.roundMoney(Number(order.total) + appliedTip);
+            await tx.order.update({
+              where: { id: order.id },
+              data: { tipAmount: appliedTip, total: effectiveTotal },
+            });
+          }
+
           const currentSummary = this.buildSummary(
             order.id,
-            order.total,
+            effectiveTotal,
             order.payments,
           );
 
@@ -157,15 +241,16 @@ export class PaymentsService {
               method: dto.method,
               amount: appliedAmount,
               receivedAmount,
-              tipAmount: dto.tipAmount ?? 0,
+              tipAmount: appliedTip,
               status: PaymentStatus.COMPLETED,
               processedAt: new Date(),
               reference: dto.reference,
+              idempotencyKey: dto.idempotencyKey,
               change: changeAmount,
             },
           });
 
-          const summary = this.buildSummary(order.id, order.total, [
+          const summary = this.buildSummary(order.id, effectiveTotal, [
             ...order.payments,
             payment,
           ]);
@@ -196,6 +281,15 @@ export class PaymentsService {
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       )
       .catch((error: unknown) => {
+        if (
+          dto.idempotencyKey &&
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException(
+            'El pago ya está procesándose. Consulta el saldo antes de reintentar.',
+          );
+        }
         if (this.isTransactionWriteConflict(error)) {
           throw new ConflictException(
             'Payment could not be processed because the order changed. Please retry.',
@@ -236,6 +330,10 @@ export class PaymentsService {
         id: result.order.id,
         status: OrderStatus.COMPLETED,
       });
+      await this.printService.queuePaidCustomerTicket(
+        result.order.id,
+        result.order.branchId,
+      );
     }
 
     return {
@@ -260,6 +358,24 @@ export class PaymentsService {
     return {
       payments: order.payments.map((payment) => this.serializePayment(payment)),
       summary: this.buildSummary(order.id, order.total, order.payments),
+    };
+  }
+
+  private async getIdempotentPayment(
+    idempotencyKey: string,
+    branchId: string,
+  ): Promise<PaymentWithSummary | null> {
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        idempotencyKey,
+        order: { branchId, deletedAt: null },
+      },
+    });
+    if (!payment) return null;
+    const paymentInfo = await this.findByOrder(payment.orderId, branchId);
+    return {
+      payment: this.serializePayment(payment),
+      summary: paymentInfo.summary,
     };
   }
 

@@ -246,7 +246,12 @@ export class UsersService {
       );
     }
     if (this.isSuperAdmin(actor)) return;
-    if (role === UserRoleEnum.CASHIER || role === UserRoleEnum.WAITER) return;
+    if (
+      role === UserRoleEnum.CASHIER ||
+      role === UserRoleEnum.WAITER ||
+      role === UserRoleEnum.COOK
+    )
+      return;
     throw new ForbiddenException('No tienes permiso para asignar ese rol');
   }
 

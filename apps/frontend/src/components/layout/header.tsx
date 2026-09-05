@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Search } from "lucide-react";
+import { Bell, Coffee, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,10 +18,16 @@ interface HeaderProps {
 
 export function Header({ title, subtitle }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/95 backdrop-blur px-6">
-      <div>
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b bg-background/95 px-3 backdrop-blur sm:h-16 sm:px-6">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 lg:hidden">
+          <Coffee className="h-5 w-5 text-white" />
+        </div>
+        <div className="min-w-0">
+          {!title && <p className="truncate text-sm font-bold lg:hidden">PlayCoffee</p>}
         {title && <h1 className="text-lg font-semibold">{title}</h1>}
         {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+        </div>
       </div>
       <div className="flex items-center gap-3">
         <div className="relative hidden md:block">
@@ -30,7 +36,7 @@ export function Header({ title, subtitle }: HeaderProps) {
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative" aria-label="Notificaciones">
+            <Button variant="ghost" size="icon" className="relative min-h-11 min-w-11" aria-label="Notificaciones">
               <Bell className="h-4 w-4" />
               <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" />
             </Button>

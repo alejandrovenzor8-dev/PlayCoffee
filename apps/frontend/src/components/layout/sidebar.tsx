@@ -51,7 +51,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="flex h-screen w-64 flex-col border-r"
+      className="hidden h-screen w-64 shrink-0 flex-col border-r lg:flex"
       style={{
         background: "hsl(var(--sidebar-background))",
         borderColor: "hsl(var(--sidebar-border))",

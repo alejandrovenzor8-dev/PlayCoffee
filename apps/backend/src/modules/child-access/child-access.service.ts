@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateChildAccessDto } from './dto/create-child-access.dto';
+import { UpdateChildAccessDto } from './dto/create-child-access.dto';
 import {
   ChildAccess,
   ChildAccessMode,
@@ -85,6 +86,9 @@ export class ChildAccessService {
     userId?: string,
   ) {
     const accessMode = dto.accessMode ?? ChildAccessMode.HOURLY;
+    if (accessMode !== ChildAccessMode.HOURLY) {
+      throw new BadRequestException('Unlimited child access is not available');
+    }
     const warningMinutes = await this.getNumberSetting(
       dto.branchId,
       'child_warning_minutes',
@@ -95,21 +99,32 @@ export class ChildAccessService {
       'child_grace_minutes',
       15,
     );
-    const defaultHourlyRate = await this.getNumberSetting(
+    const baseHourRate = await this.getNumberSetting(
       dto.branchId,
       'child_hourly_rate',
-      0,
+      99,
+    );
+    const extraHalfHourRate = await this.getNumberSetting(
+      dto.branchId,
+      'child_extra_half_hour_rate',
+      49,
+    );
+    const siblingDiscountPercent = await this.getNumberSetting(
+      dto.branchId,
+      'child_sibling_discount_percent',
+      15,
     );
     const contractedMinutes = dto.contractedMinutes ?? dto.maxDuration;
     if (accessMode === ChildAccessMode.HOURLY && !contractedMinutes) {
       throw new BadRequestException('contractedMinutes is required for HOURLY');
     }
 
-    const hourlyRate = dto.hourlyRate ?? defaultHourlyRate;
-    const baseAmount =
-      accessMode === ChildAccessMode.FREE
-        ? (dto.freePrice ?? 0)
-        : Math.ceil((contractedMinutes ?? 0) / 60) * hourlyRate;
+    if ((contractedMinutes ?? 0) < 60 || (contractedMinutes ?? 0) % 30 !== 0) {
+      throw new BadRequestException(
+        'Child access time must be 60 minutes plus 30-minute blocks',
+      );
+    }
+    const hourlyRate = baseHourRate;
     const accessCode = await this.generateAccessCode();
     const record = await this.prisma.$transaction(async (tx) => {
       const order = await this.resolveChargeOrder(
@@ -118,14 +133,30 @@ export class ChildAccessService {
         dto.orderId,
         userId,
       );
-      const productSettingKey =
-        accessMode === ChildAccessMode.FREE
-          ? 'child_free_product_id'
-          : 'child_hourly_product_id';
-      const productLabel =
-        accessMode === ChildAccessMode.FREE
-          ? 'Acceso infantil libre'
-          : 'Acceso infantil por hora';
+      const productSettingKey = 'child_hourly_product_id';
+      const productLabel = 'Acceso infantil 1 hora';
+      const siblingCount = await tx.childAccess.count({
+        where: {
+          branchId: dto.branchId,
+          exitTime: null,
+          OR: [
+            { orderId: order.id },
+            ...(dto.guardianPhone
+              ? [{ guardianPhone: dto.guardianPhone }]
+              : []),
+          ],
+        },
+      });
+      const regularAmount = this.calculateContractedAmount(
+        contractedMinutes ?? 60,
+        baseHourRate,
+        extraHalfHourRate,
+      );
+      const siblingDiscountAmount =
+        siblingCount > 0
+          ? this.roundMoney((regularAmount * siblingDiscountPercent) / 100)
+          : 0;
+      const baseAmount = this.roundMoney(regularAmount - siblingDiscountAmount);
       const product = await this.getConfiguredProduct(
         tx,
         dto.branchId,
@@ -138,7 +169,7 @@ export class ChildAccessService {
         product.id,
         1,
         baseAmount,
-        `${productLabel}: ${dto.childName}`,
+        `${productLabel}: ${dto.childName}${siblingDiscountAmount ? ` (descuento hermano ${siblingDiscountPercent}%)` : ''}`,
       );
       await this.recalculateOrderTotals(tx, order.id);
 
@@ -155,6 +186,8 @@ export class ChildAccessService {
           warningMinutes,
           graceMinutes,
           hourlyRate,
+          extraHalfHourRate,
+          siblingDiscountAmount,
           freePrice: dto.freePrice,
           baseAmount,
           totalAmount: baseAmount,
@@ -192,6 +225,74 @@ export class ChildAccessService {
       },
     );
     return summary;
+  }
+
+  async update(
+    id: string,
+    dto: UpdateChildAccessDto,
+    branchId?: string,
+    userId?: string,
+  ) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const current = await this.prisma.childAccess.findFirst({
+      where: { id, branchId },
+    });
+    if (!current) throw new NotFoundException('Child access record not found');
+    if (current.exitTime)
+      throw new BadRequestException('Completed child access cannot be edited');
+    const contractedMinutes =
+      dto.contractedMinutes ?? current.contractedMinutes ?? 60;
+    if (contractedMinutes < 60 || contractedMinutes % 30 !== 0) {
+      throw new BadRequestException(
+        'Child access time must be 60 minutes plus 30-minute blocks',
+      );
+    }
+    const regularAmount = this.calculateContractedAmount(
+      contractedMinutes,
+      Number(current.hourlyRate ?? 99),
+      Number(current.extraHalfHourRate ?? 49),
+    );
+    const baseAmount = this.roundMoney(
+      regularAmount - Number(current.siblingDiscountAmount),
+    );
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (current.baseOrderItemId) {
+        await tx.orderItem.update({
+          where: { id: current.baseOrderItemId },
+          data: {
+            unitPrice: baseAmount,
+            totalPrice: baseAmount,
+            notes: `Acceso infantil corregido: ${dto.childName ?? current.childName}`,
+          },
+        });
+      }
+      const record = await tx.childAccess.update({
+        where: { id },
+        data: {
+          ...dto,
+          contractedMinutes,
+          maxDuration: contractedMinutes,
+          baseAmount,
+          totalAmount: baseAmount,
+        },
+        include: {
+          order: {
+            select: { id: true, orderNumber: true, status: true, total: true },
+          },
+        },
+      });
+      if (record.orderId) await this.recalculateOrderTotals(tx, record.orderId);
+      return record;
+    });
+    await this.audit.record({
+      branchId,
+      userId,
+      action: 'CHILD_ACCESS_CORRECTED',
+      entity: 'ChildAccess',
+      entityId: id,
+      metadata: { correctedFields: Object.keys(dto) },
+    });
+    return this.withRuntimeSummary(updated);
   }
 
   async checkout(
@@ -237,16 +338,16 @@ export class ChildAccessService {
         const product = await this.getConfiguredProduct(
           tx,
           record.branchId,
-          'child_extra_hour_product_id',
-          'Hora extra infantil',
+          'child_extra_half_hour_product_id',
+          '30 minutos adicionales',
         );
         const extraOrderItem = await this.addOrderItem(
           tx,
           record.orderId,
           product.id,
           summary.extraHours,
-          Number(record.hourlyRate ?? 0),
-          `Hora extra infantil: ${record.childName}`,
+          Number(record.extraHalfHourRate ?? 49),
+          `30 minutos adicionales: ${record.childName}`,
         );
         extraOrderItemId = extraOrderItem.id;
         await this.recalculateOrderTotals(tx, record.orderId);
@@ -335,6 +436,7 @@ export class ChildAccessService {
       warningMinutes: number;
       graceMinutes: number;
       hourlyRate: unknown;
+      extraHalfHourRate?: unknown;
       baseAmount: unknown;
       exitTime?: Date | null;
     },
@@ -357,9 +459,7 @@ export class ChildAccessService {
     } else if (record.accessMode === ChildAccessMode.HOURLY) {
       if (elapsedMinutes >= contractedMinutes + record.graceMinutes + 1) {
         status = ChildAccessStatus.OVERTIME;
-        extraHours = Math.ceil(
-          (elapsedMinutes - contractedMinutes - record.graceMinutes) / 60,
-        );
+        extraHours = Math.ceil((elapsedMinutes - contractedMinutes) / 30);
       } else if (elapsedMinutes > contractedMinutes) {
         status = ChildAccessStatus.GRACE;
       } else if (
@@ -370,9 +470,9 @@ export class ChildAccessService {
       }
     }
 
-    const hourlyRate = Number(record.hourlyRate ?? 0);
+    const extraHalfHourRate = Number(record.extraHalfHourRate ?? 49);
     const baseAmount = Number(record.baseAmount ?? 0);
-    const extraAmount = extraHours * hourlyRate;
+    const extraAmount = extraHours * extraHalfHourRate;
     return {
       elapsedMinutes,
       remainingMinutes,
@@ -568,5 +668,16 @@ export class ChildAccessService {
 
   private roundMoney(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private calculateContractedAmount(
+    minutes: number,
+    baseRate: number,
+    extraHalfHourRate: number,
+  ) {
+    return this.roundMoney(
+      baseRate +
+        Math.max(0, Math.ceil((minutes - 60) / 30)) * extraHalfHourRate,
+    );
   }
 }

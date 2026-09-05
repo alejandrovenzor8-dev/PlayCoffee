@@ -26,7 +26,7 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get()
-  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
+  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER, UserRoleEnum.COOK)
   @ApiQuery({ name: 'categoryId', required: false })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'isActive', required: false })
@@ -45,13 +45,13 @@ export class ProductsController {
   }
 
   @Get('categories')
-  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
+  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER, UserRoleEnum.COOK)
   findCategories() {
     return this.productsService.findAllCategories();
   }
 
   @Get(':id')
-  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)
+  @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER, UserRoleEnum.COOK)
   findOne(@Param('id') id: string) {
     return this.productsService.findOne(id);
   }

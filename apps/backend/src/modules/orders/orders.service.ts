@@ -4,15 +4,23 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateOrderItemDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { OrderStatus, PaymentStatus, TableStatus } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentStatus,
+  Prisma,
+  TableStatus,
+} from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { PrintService } from '../print/print.service';
 
 const MONEY_SCALE = 100;
+type OrderDbClient = PrismaService | Prisma.TransactionClient;
 
 @Injectable()
 export class OrdersService {
@@ -20,6 +28,7 @@ export class OrdersService {
     private prisma: PrismaService,
     private audit: AuditService,
     private inventoryService: InventoryService,
+    private printService: PrintService,
   ) {}
 
   async findAll(branchId?: string, status?: OrderStatus) {
@@ -50,52 +59,55 @@ export class OrdersService {
 
   async create(dto: CreateOrderDto, userId: string) {
     if (!dto.branchId) throw new BadRequestException('branchId is required');
-    if (dto.tableId) {
-      const table = await this.prisma.restaurantTable.findFirst({
-        where: {
-          id: dto.tableId,
-          deletedAt: null,
-          area: { branchId: dto.branchId },
-        },
-        select: { id: true },
-      });
-      if (!table) {
-        throw new BadRequestException('Table does not belong to this branch');
+    const order = await this.prisma.$transaction(async (tx) => {
+      if (dto.tableId) {
+        const table = await tx.restaurantTable.findFirst({
+          where: {
+            id: dto.tableId,
+            deletedAt: null,
+            area: { branchId: dto.branchId },
+          },
+          select: { id: true },
+        });
+        if (!table) {
+          throw new BadRequestException('Table does not belong to this branch');
+        }
       }
-    }
 
-    const { subtotal, itemsData } = await this.buildOrderItems(dto.items);
-    const taxAmount = subtotal * 0; // Tax handled at item level if needed
-    const total = subtotal + taxAmount;
-    const orderNumber = `PC-${Date.now().toString(36).toUpperCase()}`;
+      const { subtotal, itemsData } = await this.buildOrderItems(dto.items, tx);
+      const taxAmount = subtotal * 0; // Tax handled at item level if needed
+      const total = subtotal + taxAmount;
+      const orderNumber = this.createOrderNumber();
 
-    const order = await this.prisma.order.create({
-      data: {
-        branchId: dto.branchId,
-        tableId: dto.tableId,
-        userId,
-        orderNumber,
-        status: OrderStatus.PENDING,
-        notes: dto.notes,
-        subtotal,
-        taxAmount,
-        discountAmount: 0,
-        total,
-        isDelivery: dto.isDelivery ?? false,
-        isTakeaway: dto.isTakeaway ?? false,
-        deliveryAddress: dto.deliveryAddress,
-        items: { create: itemsData as never },
-      },
-      include: this.orderInclude(),
-    });
-
-    // Mark table as occupied if applicable
-    if (dto.tableId) {
-      await this.prisma.restaurantTable.update({
-        where: { id: dto.tableId },
-        data: { status: TableStatus.OCCUPIED },
+      const createdOrder = await tx.order.create({
+        data: {
+          branchId: dto.branchId,
+          tableId: dto.tableId,
+          userId,
+          orderNumber,
+          status: OrderStatus.PENDING,
+          notes: dto.notes,
+          subtotal,
+          taxAmount,
+          discountAmount: 0,
+          total,
+          isDelivery: dto.isDelivery ?? false,
+          isTakeaway: dto.isTakeaway ?? false,
+          deliveryAddress: dto.deliveryAddress,
+          items: { create: itemsData as never },
+        },
+        include: this.orderInclude(),
       });
-    }
+
+      if (dto.tableId) {
+        await tx.restaurantTable.update({
+          where: { id: dto.tableId },
+          data: { status: TableStatus.OCCUPIED },
+        });
+      }
+
+      return createdOrder;
+    });
 
     await this.audit.record({
       branchId: order.branchId,
@@ -109,6 +121,12 @@ export class OrdersService {
         total: Number(order.total),
       },
     });
+
+    await this.printService.queueProductionTickets(
+      order.id,
+      order.branchId,
+      order.items.map((item) => item.id),
+    );
 
     return order;
   }
@@ -127,11 +145,19 @@ export class OrdersService {
     };
   }
 
-  private async buildOrderItems(items: CreateOrderItemDto[]) {
+  private async buildOrderItems(
+    items: CreateOrderItemDto[],
+    db: OrderDbClient = this.prisma,
+  ) {
     const normalizedItems = this.consolidateOrderItems(items);
     const productIds = normalizedItems.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({
+    const products = await db.product.findMany({
       where: { id: { in: productIds }, deletedAt: null },
+      include: {
+        modifiers: {
+          include: { modifier: true },
+        },
+      },
     });
 
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -167,23 +193,29 @@ export class OrdersService {
         price: unknown;
       }> = [];
       if (item.modifiers?.length) {
-        const modifierIds = item.modifiers.map((m) => m.modifierId);
-        const modifiers = await this.prisma.modifier.findMany({
-          where: { id: { in: modifierIds } },
-        });
-        const modifierMap = new Map(modifiers.map((m) => [m.id, m]));
+        const modifierMap = new Map(
+          product.modifiers
+            .filter(
+              ({ modifier }) =>
+                modifier.isActive && modifier.deletedAt === null,
+            )
+            .map(({ modifier }) => [modifier.id, modifier]),
+        );
 
         for (const mod of item.modifiers) {
           const modifier = modifierMap.get(mod.modifierId);
-          if (modifier) {
-            const modPrice = Number(modifier.price) * (mod.quantity ?? 1);
-            itemModifiersTotal += modPrice;
-            modifiersCreate.push({
-              modifierId: mod.modifierId,
-              quantity: mod.quantity ?? 1,
-              price: modifier.price,
-            });
+          if (!modifier) {
+            throw new BadRequestException(
+              `Modifier ${mod.modifierId} is not available for product ${product.name}`,
+            );
           }
+          const modPrice = Number(modifier.price) * (mod.quantity ?? 1);
+          itemModifiersTotal += modPrice;
+          modifiersCreate.push({
+            modifierId: mod.modifierId,
+            quantity: mod.quantity ?? 1,
+            price: modifier.price,
+          });
         }
       }
 
@@ -235,42 +267,55 @@ export class OrdersService {
     userId?: string,
   ) {
     if (!items.length) throw new BadRequestException('items are required');
-    const order = await this.findOne(id, branchId);
-    if (
-      order.status === OrderStatus.CANCELLED ||
-      order.status === OrderStatus.COMPLETED
-    ) {
-      throw new BadRequestException('Cannot add items to a closed order');
-    }
-    const summary = this.getPaymentSummary(order.total, order.payments);
-    if (summary.totalCents > 0 && summary.remainingCents <= 0) {
-      throw new BadRequestException('Cannot add items to a paid order');
-    }
-
-    const { subtotal: itemsSubtotal, itemsData } =
-      await this.buildOrderItems(items);
-    const nextSubtotal = Number(order.subtotal) + itemsSubtotal;
-    const nextTaxAmount = Number(order.taxAmount);
-    const nextTotal =
-      nextSubtotal + nextTaxAmount - Number(order.discountAmount);
-
-    const updatedOrder = await this.prisma.order.update({
-      where: { id },
-      data: {
-        subtotal: nextSubtotal,
-        total: nextTotal,
-        status: OrderStatus.PREPARING,
-        items: { create: itemsData as never },
-      },
-      include: this.orderInclude(),
-    });
-
-    if (updatedOrder.tableId) {
-      await this.prisma.restaurantTable.update({
-        where: { id: updatedOrder.tableId },
-        data: { status: TableStatus.OCCUPIED },
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const previousItemIds = new Set<string>();
+    const updatedOrder = await this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id, branchId, deletedAt: null },
+        include: this.orderInclude(),
       });
-    }
+      if (!order) throw new NotFoundException('Order not found');
+      order.items.forEach((item) => previousItemIds.add(item.id));
+      if (
+        order.status === OrderStatus.CANCELLED ||
+        order.status === OrderStatus.COMPLETED
+      ) {
+        throw new BadRequestException('Cannot add items to a closed order');
+      }
+      const summary = this.getPaymentSummary(order.total, order.payments);
+      if (summary.totalCents > 0 && summary.remainingCents <= 0) {
+        throw new BadRequestException('Cannot add items to a paid order');
+      }
+
+      const { subtotal: itemsSubtotal, itemsData } = await this.buildOrderItems(
+        items,
+        tx,
+      );
+      const nextSubtotal = Number(order.subtotal) + itemsSubtotal;
+      const nextTaxAmount = Number(order.taxAmount);
+      const nextTotal =
+        nextSubtotal + nextTaxAmount - Number(order.discountAmount);
+
+      const changedOrder = await tx.order.update({
+        where: { id },
+        data: {
+          subtotal: nextSubtotal,
+          total: nextTotal,
+          status: OrderStatus.PREPARING,
+          items: { create: itemsData as never },
+        },
+        include: this.orderInclude(),
+      });
+
+      if (changedOrder.tableId) {
+        await tx.restaurantTable.update({
+          where: { id: changedOrder.tableId },
+          data: { status: TableStatus.OCCUPIED },
+        });
+      }
+
+      return changedOrder;
+    });
 
     await this.audit.record({
       branchId: updatedOrder.branchId,
@@ -285,7 +330,21 @@ export class OrdersService {
       },
     });
 
+    await this.printService.queueProductionTickets(
+      updatedOrder.id,
+      updatedOrder.branchId,
+      updatedOrder.items
+        .filter((item) => !previousItemIds.has(item.id))
+        .map((item) => item.id),
+    );
+
     return updatedOrder;
+  }
+
+  private createOrderNumber() {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const entropy = randomUUID().slice(0, 6).toUpperCase();
+    return `PC-${timestamp}-${entropy}`;
   }
 
   async updateStatus(

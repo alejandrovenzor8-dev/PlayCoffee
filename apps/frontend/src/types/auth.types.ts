@@ -3,7 +3,7 @@ export interface User {
   email: string;
   firstName: string;
   lastName: string;
-  role: "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER";
+  role: "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER" | "COOK";
   branchId?: string;
   avatarUrl?: string;
   isActive: boolean;

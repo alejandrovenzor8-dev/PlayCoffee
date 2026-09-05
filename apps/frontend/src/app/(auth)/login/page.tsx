@@ -112,7 +112,7 @@ function LoginContent() {
   const [showPassword, setShowPassword] = useState(false);
   const [emailForm, setEmailForm] = useState({ email: "", password: "" });
 
-  const getSafeNextPath = (candidate: string, nextUser: { role: "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER" }) => {
+  const getSafeNextPath = (candidate: string, nextUser: { role: "SUPER_ADMIN" | "ADMIN" | "CASHIER" | "WAITER" | "COOK" }) => {
     const localPath = candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
     return canAccessModule(nextUser, getModuleForPath(localPath))
       ? localPath
