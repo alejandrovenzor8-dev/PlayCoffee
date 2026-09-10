@@ -129,7 +129,7 @@ function LoginContent() {
         emailForm.password.trim(),
       );
       setAuth(data.user, data.accessToken, data.refreshToken);
-      router.push(getSafeNextPath(nextPath, data.user));
+      window.location.assign(getSafeNextPath(nextPath, data.user));
     } catch (err: unknown) {
       if (!(err instanceof AxiosError) || err.response?.status !== 401) {
         setError("No se pudo iniciar sesión. Verifica conexión con el servidor.");
@@ -148,7 +148,7 @@ function LoginContent() {
     try {
       const data = await authApi.loginPin(email, pin);
       setAuth(data.user, data.accessToken, data.refreshToken);
-      router.push(getSafeNextPath(nextPath, data.user));
+      window.location.assign(getSafeNextPath(nextPath, data.user));
     } catch {
       setError("PIN incorrecto o usuario no encontrado.");
     } finally {

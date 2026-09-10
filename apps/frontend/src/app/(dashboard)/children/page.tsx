@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { childAccessApi, ordersApi } from "@/lib/api";
+import { childAccessApi, ordersApi, getApiErrorMessage } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -180,6 +180,7 @@ export default function ChildrenPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
   const [editingRecord, setEditingRecord] = useState<ChildRecord | null>(null);
   const [checkoutRecord, setCheckoutRecord] = useState<ChildRecord | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -261,9 +262,11 @@ export default function ChildrenPage() {
 
   const handleRegister = async () => {
     setIsSubmitting(true);
+    setRegisterError(null);
     setLoadError(null);
     try {
       const payload = {
+        branchId,
         childName: form.childName,
         childAge: form.childAge ? Number(form.childAge) : undefined,
         guardianName: form.guardianName,
@@ -291,8 +294,8 @@ export default function ChildrenPage() {
       resetForm();
       loadActive();
       loadOpenOrders();
-    } catch {
-      setLoadError("No se pudo registrar la entrada. Revisa datos y permisos.");
+    } catch (error) {
+      setRegisterError(getApiErrorMessage(error, "No se pudo guardar el registro. Intenta nuevamente."));
     } finally {
       setIsSubmitting(false);
     }
@@ -428,6 +431,7 @@ export default function ChildrenPage() {
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader><DialogTitle>{editingRecord ? "Corregir registro" : "Registrar ingreso"}</DialogTitle></DialogHeader>
+          {registerError && <p role="alert" className="text-sm text-destructive">{registerError}</p>}
           <div className="grid gap-4 py-2">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5"><Label>Nombre del niño</Label><Input value={form.childName} onChange={(e) => setForm((p) => ({ ...p, childName: e.target.value }))} /></div>

@@ -217,6 +217,9 @@ export default function PosPage() {
   const payableTotal = paymentSummary?.total ?? basePayableTotal + previewTipAmount;
   const paidAmount = paymentSummary?.totalPaid ?? 0;
   const remainingAmount = paymentSummary?.remainingAmount ?? payableTotal;
+  const hasPendingOrderItems = Boolean(currentOrder && cart.items.length > 0);
+  const mustFinishPartialPayment =
+    paymentSummary?.paymentStatus === "PARTIALLY_PAID" && !hasPendingOrderItems;
   const cashReceived = Number(receivedAmount || 0);
   const cashChange =
     paymentMethod === "CASH" ? Math.max(0, cashReceived - remainingAmount) : 0;
@@ -699,7 +702,7 @@ export default function PosPage() {
       <Dialog
         open={paymentOpen}
         onOpenChange={(open) => {
-          if (!open && paymentSummary?.paymentStatus === "PARTIALLY_PAID") return;
+          if (!open && mustFinishPartialPayment) return;
           setPaymentOpen(open);
         }}
       >
@@ -875,9 +878,9 @@ export default function PosPage() {
             <Button
               variant="outline"
               onClick={() => setPaymentOpen(false)}
-              disabled={isProcessing || paymentSummary?.paymentStatus === "PARTIALLY_PAID"}
+              disabled={isProcessing || mustFinishPartialPayment}
             >
-              Cancelar
+              {hasPendingOrderItems ? "Volver al ticket" : "Cancelar"}
             </Button>
             <Button onClick={handleAddPayment} disabled={isProcessing || remainingAmount <= 0}>
               {isProcessing ? (

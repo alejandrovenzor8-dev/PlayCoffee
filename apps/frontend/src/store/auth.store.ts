@@ -1,6 +1,36 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type { User } from "@/types/auth.types";
+
+const authStorage: StateStorage = {
+  getItem: (name) => {
+    try {
+      return localStorage.getItem(name) ?? sessionStorage.getItem(name);
+    } catch {
+      try {
+        return sessionStorage.getItem(name);
+      } catch {
+        return null;
+      }
+    }
+  },
+  setItem: (name, value) => {
+    try {
+      localStorage.setItem(name, value);
+      return;
+    } catch {
+      sessionStorage.setItem(name, value);
+    }
+  },
+  removeItem: (name) => {
+    try {
+      localStorage.removeItem(name);
+    } catch {}
+    try {
+      sessionStorage.removeItem(name);
+    } catch {}
+  },
+};
 
 interface AuthState {
   user: User | null;
@@ -24,17 +54,13 @@ export const useAuthStore = create<AuthState>()(
       hasHydrated: false,
 
       setAuth: (user, accessToken, refreshToken) => {
-        if (typeof window !== "undefined") {
-          localStorage.setItem("accessToken", accessToken);
-          localStorage.setItem("refreshToken", refreshToken);
-        }
         set({ user, accessToken, refreshToken, isAuthenticated: true });
       },
 
       clearAuth: () => {
         if (typeof window !== "undefined") {
-          localStorage.removeItem("accessToken");
-          localStorage.removeItem("refreshToken");
+          authStorage.removeItem("accessToken");
+          authStorage.removeItem("refreshToken");
         }
         set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
       },
@@ -48,6 +74,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "playcoffee-auth",
+      storage: createJSONStorage(() => authStorage),
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,
