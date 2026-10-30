@@ -72,32 +72,37 @@ export class CashService {
 
   async close(branchId: string, userId: string, dto: CloseShiftDto) {
     if (!branchId) throw new BadRequestException('branchId is required');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM shifts WHERE "branchId" = ${branchId} AND "closedAt" IS NULL FOR UPDATE`;
+      const shift = await tx.shift.findFirst({
+        where: { branchId, closedAt: null },
+        include: this.shiftInclude,
+      });
+      if (!shift) throw new NotFoundException('Open cash shift not found');
+      if (shift.closedAt)
+        throw new BadRequestException('Shift is already closed');
 
-    const shift = await this.findOpenShift(branchId);
-    if (!shift) throw new NotFoundException('Open cash shift not found');
-    if (shift.closedAt)
-      throw new BadRequestException('Shift is already closed');
+      const summary = this.calculate(shift);
+      const closed = await tx.shift.update({
+        where: { id: shift.id },
+        data: {
+          closingBalance: dto.closingBalance,
+          expectedCash: summary.expectedCash,
+          cashDifference: dto.closingBalance - summary.expectedCash,
+          totalSales: summary.totalSales,
+          totalCash: summary.totalCash,
+          totalCard: summary.totalCard,
+          totalTransfer: summary.totalTransfer,
+          totalIn: summary.totalIn,
+          totalOut: summary.totalOut,
+          closedAt: new Date(),
+          notes: dto.notes ?? shift.notes,
+        },
+        include: this.shiftInclude,
+      });
 
-    const summary = this.calculate(shift);
-    const closed = await this.prisma.shift.update({
-      where: { id: shift.id },
-      data: {
-        closingBalance: dto.closingBalance,
-        expectedCash: summary.expectedCash,
-        cashDifference: dto.closingBalance - summary.expectedCash,
-        totalSales: summary.totalSales,
-        totalCash: summary.totalCash,
-        totalCard: summary.totalCard,
-        totalTransfer: summary.totalTransfer,
-        totalIn: summary.totalIn,
-        totalOut: summary.totalOut,
-        closedAt: new Date(),
-        notes: dto.notes ?? shift.notes,
-      },
-      include: this.shiftInclude,
+      return this.toShiftSummary(closed, userId);
     });
-
-    return this.toShiftSummary(closed, userId);
   }
 
   async list(branchId: string, from?: string, to?: string) {

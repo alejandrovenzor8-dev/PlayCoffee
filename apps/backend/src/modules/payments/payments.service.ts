@@ -116,7 +116,14 @@ export class PaymentsService {
         dto.idempotencyKey,
         branchId,
       );
-      if (previous) return previous;
+      if (previous) {
+        if (previous.summary.orderId !== dto.orderId) {
+          throw new ConflictException(
+            'La referencia de pago pertenece a otro ticket.',
+          );
+        }
+        return previous;
+      }
     }
 
     const result = await this.prisma
@@ -173,7 +180,9 @@ export class PaymentsService {
               (Number(order.subtotal) - Number(order.discountAmount)) *
                 (dto.tipPercentage / 100),
             );
-            effectiveTotal = this.roundMoney(Number(order.total) + appliedTip);
+            effectiveTotal = this.roundMoney(
+              Number(order.total) - Number(order.tipAmount ?? 0) + appliedTip,
+            );
             await tx.order.update({
               where: { id: order.id },
               data: { tipAmount: appliedTip, total: effectiveTotal },
@@ -232,11 +241,25 @@ export class PaymentsService {
             select: { id: true },
             orderBy: { openedAt: 'desc' },
           });
+          if (!shift) {
+            throw new BadRequestException(
+              'Debes abrir caja antes de registrar un cobro.',
+            );
+          }
+          const openShift = await tx.shift.updateMany({
+            where: { id: shift.id, closedAt: null },
+            data: { updatedAt: new Date() },
+          });
+          if (openShift.count !== 1) {
+            throw new ConflictException(
+              'La caja se cerró. Abre caja antes de cobrar.',
+            );
+          }
 
           const payment = await tx.payment.create({
             data: {
               orderId: dto.orderId,
-              shiftId: shift?.id,
+              shiftId: shift.id,
               userId,
               method: dto.method,
               amount: appliedAmount,
@@ -255,20 +278,28 @@ export class PaymentsService {
             payment,
           ]);
 
+          const pendingPreparation =
+            order.status !== OrderStatus.DELIVERED &&
+            order.items.some(
+              (item) => item.product.preparationStation !== 'NONE',
+            );
+          const closeOrder =
+            summary.paymentStatus === 'PAID' && !pendingPreparation;
           if (summary.paymentStatus === 'PAID') {
             await this.discountInventoryForPaidOrder(tx, order, userId);
 
             await tx.order.update({
               where: { id: dto.orderId },
               data: {
-                status: OrderStatus.COMPLETED,
-                completedAt: new Date(),
+                ...(closeOrder
+                  ? { status: OrderStatus.COMPLETED, completedAt: new Date() }
+                  : {}),
                 inventoryDiscountedAt:
                   order.inventoryDiscountedAt ?? new Date(),
               },
             });
 
-            if (order.tableId) {
+            if (order.tableId && closeOrder) {
               await tx.restaurantTable.update({
                 where: { id: order.tableId },
                 data: { status: TableStatus.AVAILABLE },
@@ -276,7 +307,12 @@ export class PaymentsService {
             }
           }
 
-          return { order, payment: this.serializePayment(payment), summary };
+          return {
+            order,
+            closeOrder,
+            payment: this.serializePayment(payment),
+            summary,
+          };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       )
@@ -310,7 +346,7 @@ export class PaymentsService {
         amount: result.payment.amount,
         receivedAmount: result.payment.receivedAmount,
         changeAmount: result.payment.changeAmount,
-        orderCompleted: result.summary.paymentStatus === 'PAID',
+        orderCompleted: result.closeOrder,
       },
     });
 
@@ -326,10 +362,16 @@ export class PaymentsService {
       result.summary,
     );
     if (result.summary.paymentStatus === 'PAID') {
-      this.realtime.emitOrderEvent(result.order.branchId, 'order.completed', {
-        id: result.order.id,
-        status: OrderStatus.COMPLETED,
-      });
+      this.realtime.emitOrderEvent(
+        result.order.branchId,
+        result.closeOrder ? 'order.completed' : 'order.updated',
+        {
+          id: result.order.id,
+          status: result.closeOrder
+            ? OrderStatus.COMPLETED
+            : result.order.status,
+        },
+      );
       await this.printService.queuePaidCustomerTicket(
         result.order.id,
         result.order.branchId,
@@ -496,7 +538,12 @@ export class PaymentsService {
         );
       }
 
-      const currentStock = Number(inventoryItem.currentStock);
+      // The same product may occur on several lines with different modifiers.
+      const latestStock = await tx.inventoryItem.findUniqueOrThrow({
+        where: { id: inventoryItem.id },
+        select: { currentStock: true },
+      });
+      const currentStock = Number(latestStock.currentStock);
       const newStock = currentStock - item.quantity;
       if (newStock < 0) {
         throw new BadRequestException(

@@ -1,0 +1,168 @@
+- generic:
+  - generic:
+    - complementary:
+      - generic:
+        - generic:
+          - paragraph: PlayCoffee
+          - paragraph: Management OS
+      - navigation:
+        - paragraph: Menu Principal
+        - link:
+          - /url: /
+          - generic: Dashboard
+        - link:
+          - /url: /pos
+          - generic: Caja / POS
+        - link:
+          - /url: /cash
+          - generic: Corte de Caja
+        - link:
+          - /url: /products
+          - generic: Catalogo
+        - link:
+          - /url: /tables
+          - generic: Mesas
+        - link:
+          - /url: /orders
+          - generic: Comandero
+        - link:
+          - /url: /child-access
+          - generic: Control Infantil
+        - link:
+          - /url: /reservations
+          - generic: Reservas
+        - link:
+          - /url: /inventory
+          - generic: Inventario
+        - link:
+          - /url: /reports
+          - generic: Reportes
+        - link:
+          - /url: /users
+          - generic: Usuarios
+        - link:
+          - /url: /settings
+          - generic: Configuracion
+      - generic:
+        - generic:
+          - generic: AS
+          - generic:
+            - paragraph: Admin System
+            - generic: SUPER_ADMIN
+          - button
+    - generic:
+      - banner:
+        - generic:
+          - generic:
+            - textbox:
+              - /placeholder: Buscar...
+          - button [expanded]
+      - main:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - heading [level=1]: Caja / POS
+                - paragraph: Registra órdenes y procesa pagos
+              - generic: Conectado
+            - generic:
+              - textbox:
+                - /placeholder: Buscar producto...
+            - generic:
+              - button: Todos
+              - button: Bebidas
+              - button: Alimentos
+              - button: Postres
+            - generic:
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: 30 minutos adicionales
+                - paragraph: $49.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Acceso infantil 1 hora
+                - paragraph: $99.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Avocado Toast
+                - paragraph: $110.00
+              - button:
+                - generic: Popular
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Cappuccino
+                - paragraph: $65.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Cheesecake
+                - paragraph: $75.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Brownie
+                - paragraph: $60.00
+              - button:
+                - generic: Popular
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Latte
+                - paragraph: $70.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Waffle
+                - paragraph: $95.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Americano
+                - paragraph: $45.00
+              - button:
+                - generic: Popular
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Matcha Latte
+                - paragraph: $85.00
+          - generic:
+            - generic:
+              - generic: Carrito
+              - generic: 0 items
+            - generic:
+              - generic: Mesa
+              - combobox:
+                - generic: Sin mesa / para llevar
+            - generic:
+              - generic:
+                - paragraph: Carrito vacío
+                - paragraph: Selecciona productos
+            - generic:
+              - generic:
+                - generic: Subtotal
+                - generic: $0.00
+              - generic:
+                - generic: Total
+                - generic: $0.00
+              - button [disabled]: Cobrar
+  - list
+  - alert
+  - menu "Notificaciones" [active] [ref=f2e377]:
+    - generic [ref=f2e378]: Notificaciones · En línea
+    - separator [ref=f2e379]
+    - generic [ref=f2e380]:
+      - button "Marcar como leídas" [ref=f2e381]
+      - link [ref=f2e382] [cursor=pointer]:
+        - /url: /cash
+        - paragraph [ref=f2e383]: Pago registrado
+        - time [ref=f2e384]: 12:23:41 a.m.
+      - link [ref=f2e385] [cursor=pointer]:
+        - /url: /cash
+        - paragraph [ref=f2e386]: Pago registrado
+        - time [ref=f2e387]: 12:23:31 a.m.
+      - link [ref=f2e388] [cursor=pointer]:
+        - /url: /orders
+        - paragraph [ref=f2e389]: "Nueva comanda: revisar cocina y barra"
+        - time [ref=f2e390]: 12:23:31 a.m.

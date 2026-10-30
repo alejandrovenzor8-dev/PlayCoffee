@@ -97,7 +97,11 @@ export default function OrdersPage() {
   }), [loadOrders]);
   const { status: realtimeStatus } = useRealtime(realtimeEvents);
 
-  useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => {
+    loadOrders();
+    const timer = window.setInterval(loadOrders, 15000);
+    return () => window.clearInterval(timer);
+  }, [loadOrders]);
 
   const filteredOrders = (statuses: OrderStatus[]) =>
     orders.filter((o) => statuses.includes(o.status));
@@ -111,7 +115,7 @@ export default function OrdersPage() {
     }
   };
 
-  const canPrintCustomer = user?.role === "ADMIN" || user?.role === "CASHIER";
+  const canPrintCustomer = user?.role === "SUPER_ADMIN" || user?.role === "ADMIN" || user?.role === "CASHIER";
 
   const handlePrint = async (orderId: string, type: PrintTicketType) => {
     setIsPrinting(`${orderId}-${type}`);
@@ -279,6 +283,7 @@ export default function OrdersPage() {
                         <div className="flex items-center justify-between">
                           <div>
                             <span className="text-sm font-bold">{formatCurrency(order.total)}</span>
+                            {remainingAmount <= 0 && <p className="text-xs text-emerald-700">Pagado</p>}
                             {order.status === "DELIVERED" && remainingAmount > 0 && (
                               <p className="text-xs text-amber-700">
                                 Entregada, pendiente de cobro: {formatCurrency(remainingAmount)}

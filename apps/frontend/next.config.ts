@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
+import { networkInterfaces } from "node:os";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["192.168.1.158"],
+  allowedDevOrigins: Object.values(networkInterfaces()).flatMap((addresses) =>
+    (addresses ?? []).filter((address) => address.family === "IPv4" && !address.internal).map((address) => address.address)
+  ),
   async rewrites() {
     return [
       {

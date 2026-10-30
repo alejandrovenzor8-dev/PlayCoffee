@@ -21,10 +21,6 @@ export function getApiOrigin() {
 }
 
 function clearClientAuth() {
-  if (typeof window !== "undefined") {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-  }
   useAuthStore.getState().clearAuth();
 }
 
@@ -59,8 +55,7 @@ export function getApiErrorMessage(error: unknown, fallback: string) {
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (typeof window !== "undefined") {
     const token =
-      useAuthStore.getState().accessToken ??
-      localStorage.getItem("accessToken");
+      useAuthStore.getState().accessToken;
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -79,13 +74,12 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
       const refreshToken =
-        useAuthStore.getState().refreshToken ??
-        localStorage.getItem("refreshToken");
+        useAuthStore.getState().refreshToken;
 
       if (refreshToken) {
         try {
           refreshPromise ??= axios
-            .post(`${BASE_URL}/api/v1/auth/refresh`, { refreshToken })
+            .post(`${BASE_URL}/api/v1/auth/refresh`, { refreshToken }, { timeout: 15000 })
             .then(({ data }) => {
               const tokens = data.data;
               const currentUser = useAuthStore.getState().user;

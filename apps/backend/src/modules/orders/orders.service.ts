@@ -353,43 +353,73 @@ export class OrdersService {
     branchId?: string,
     userId?: string,
   ) {
-    const order = await this.findOne(id, branchId);
-    if (dto.status) {
-      this.assertStatusChangeAllowed(order, dto.status);
-    }
+    const { order, updatedOrder, nextStatus } = await this.prisma
+      .$transaction(
+        async (tx) => {
+          const order = await tx.order.findFirst({
+            where: { id, branchId, deletedAt: null },
+            include: this.orderInclude(),
+          });
+          if (!order) throw new NotFoundException('Order not found');
+          if (dto.status) {
+            this.assertStatusChangeAllowed(order, dto.status);
+          }
+          const paid =
+            this.getPaymentSummary(order.total, order.payments)
+              .remainingCents === 0;
+          const nextStatus =
+            dto.status === OrderStatus.DELIVERED && paid
+              ? OrderStatus.COMPLETED
+              : dto.status;
 
-    const updatedOrder = await this.prisma.order.update({
-      where: { id },
-      data: {
-        ...(dto.status ? { status: dto.status } : {}),
-        notes: dto.notes,
-        ...(dto.status === OrderStatus.COMPLETED
-          ? { completedAt: new Date() }
-          : {}),
-        ...(dto.status === OrderStatus.CANCELLED
-          ? { cancelledAt: new Date() }
-          : {}),
-      },
-      include: {
-        table: true,
-        items: { include: { product: true } },
-        payments: true,
-      },
-    });
+          const updatedOrder = await tx.order.update({
+            where: { id },
+            data: {
+              ...(nextStatus ? { status: nextStatus } : {}),
+              notes: dto.notes,
+              ...(nextStatus === OrderStatus.COMPLETED
+                ? { completedAt: new Date() }
+                : {}),
+              ...(dto.status === OrderStatus.CANCELLED
+                ? { cancelledAt: new Date() }
+                : {}),
+            },
+            include: {
+              table: true,
+              items: { include: { product: true } },
+              payments: true,
+            },
+          });
 
-    // Free table when order is completed or cancelled
-    if (
-      order.tableId &&
-      (dto.status === OrderStatus.COMPLETED ||
-        dto.status === OrderStatus.CANCELLED)
-    ) {
-      await this.prisma.restaurantTable.update({
-        where: { id: order.tableId },
-        data: { status: TableStatus.AVAILABLE },
+          // Free table when order is completed or cancelled
+          if (
+            order.tableId &&
+            (nextStatus === OrderStatus.COMPLETED ||
+              dto.status === OrderStatus.CANCELLED)
+          ) {
+            await tx.restaurantTable.update({
+              where: { id: order.tableId },
+              data: { status: TableStatus.AVAILABLE },
+            });
+          }
+
+          return { order, updatedOrder, nextStatus };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch((error: unknown) => {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034'
+        ) {
+          throw new ConflictException(
+            'La orden cambió en otro dispositivo. Actualiza e intenta nuevamente.',
+          );
+        }
+        throw error;
       });
-    }
 
-    if (dto.status === OrderStatus.COMPLETED) {
+    if (nextStatus === OrderStatus.COMPLETED) {
       await this.inventoryService.discountOrderStock(
         updatedOrder.id,
         updatedOrder.branchId,
@@ -439,6 +469,25 @@ export class OrdersService {
     }
     if (order.status === OrderStatus.CANCELLED) {
       throw new BadRequestException('Cannot change a cancelled order');
+    }
+    if (
+      nextStatus === OrderStatus.CANCELLED &&
+      order.payments.some(
+        (payment) => payment.status === PaymentStatus.COMPLETED,
+      )
+    ) {
+      throw new BadRequestException(
+        'No se puede cancelar una orden con pagos registrados.',
+      );
+    }
+    if (
+      nextStatus === OrderStatus.COMPLETED &&
+      order.status !== OrderStatus.DELIVERED &&
+      order.items.some((item) => item.product.preparationStation !== 'NONE')
+    ) {
+      throw new ConflictException(
+        'Entrega primero la comanda antes de cerrarla.',
+      );
     }
     if (nextStatus !== OrderStatus.COMPLETED) return;
 

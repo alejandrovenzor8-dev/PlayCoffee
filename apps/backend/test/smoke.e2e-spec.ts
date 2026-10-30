@@ -9,6 +9,8 @@ import { AppModule } from '../src/app.module';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { TransformInterceptor } from '../src/common/interceptors/transform.interceptor';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { io, Socket } from 'socket.io-client';
+import { RealtimeGateway } from '../src/modules/realtime/realtime.gateway';
 
 const smokeDatabaseUrl =
   process.env.SMOKE_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
@@ -95,7 +97,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
     );
     app.useGlobalFilters(new HttpExceptionFilter());
     app.useGlobalInterceptors(new TransformInterceptor());
-    await app.init();
+    await app.listen(0, '127.0.0.1');
 
     prisma = app.get(PrismaService);
     server = app.getHttpServer();
@@ -106,6 +108,11 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
     adminB = await login('admin-b.smoke@example.com');
     cashierA = await login('cashier-a.smoke@example.com');
     waiterA = await login('waiter-a.smoke@example.com');
+    await request(server)
+      .post('/api/v1/cash/open')
+      .set('Authorization', auth(cashierA))
+      .send({ openingBalance: 0 })
+      .expect(201);
   });
 
   afterAll(async () => {
@@ -233,13 +240,25 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
   }
 
   async function cleanupSmokeData(db: PrismaClient) {
+    await db.cashMovement.deleteMany({
+      where: { branchId: { in: [branchAId, branchBId] } },
+    });
+    await db.childAccess.deleteMany({
+      where: { branchId: { in: [branchAId, branchBId] } },
+    });
+    await db.setting.deleteMany({
+      where: { branchId: { in: [branchAId, branchBId] } },
+    });
     await db.inventoryMovement.deleteMany({
       where: { inventoryItemId },
     });
     await db.payment.deleteMany({
-      where: { order: { orderNumber: { startsWith: 'PC-' } } },
+      where: { order: { branchId: { in: [branchAId, branchBId] } } },
     });
     await db.order.deleteMany({
+      where: { branchId: { in: [branchAId, branchBId] } },
+    });
+    await db.shift.deleteMany({
       where: { branchId: { in: [branchAId, branchBId] } },
     });
     await db.inventoryItem.deleteMany({ where: { id: inventoryItemId } });
@@ -801,6 +820,365 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         .set('Authorization', auth(waiterA))
         .send({ status: 'READY' })
         .expect(400);
+    });
+  });
+
+  describe('delivery regressions', () => {
+    it('requires an open cash shift for every payment method and rejects payments after closing', async () => {
+      const order = await createOrder(adminB, {
+        branchId: branchBId,
+        items: [{ productId: productBId, quantity: 1 }],
+      });
+      for (const method of ['CASH', 'CARD', 'TRANSFER']) {
+        const response = await request(server)
+          .post('/api/v1/payments')
+          .set('Authorization', auth(adminB))
+          .send({ orderId: order.id, method, amount: 1 })
+          .expect(400);
+        expect(JSON.stringify(response.body)).toContain('abrir caja');
+      }
+      expect(await prisma.payment.count({ where: { orderId: order.id } })).toBe(
+        0,
+      );
+      await request(server)
+        .post('/api/v1/cash/open')
+        .set('Authorization', auth(adminB))
+        .send({ openingBalance: 0 })
+        .expect(201);
+      await pay(adminB, order.id, 1);
+      await request(server)
+        .patch('/api/v1/cash/close')
+        .set('Authorization', auth(adminB))
+        .send({ closingBalance: 0 })
+        .expect(200);
+      await pay(adminB, order.id, 1, 400);
+    });
+
+    it('keeps prepaid kitchen orders active until delivered and prevents cancellation', async () => {
+      await prisma.product.update({
+        where: { id: productAId },
+        data: { preparationStation: 'KITCHEN' },
+      });
+      const order = await createOrder(waiterA, {
+        tableId: tableAId,
+        items: [{ productId: productAId, quantity: 1 }],
+      });
+      await pay(cashierA, order.id, Number(order.total));
+      expect(
+        (await prisma.order.findUniqueOrThrow({ where: { id: order.id } }))
+          .status,
+      ).not.toBe('COMPLETED');
+      expect(
+        (
+          await prisma.restaurantTable.findUniqueOrThrow({
+            where: { id: tableAId },
+          })
+        ).status,
+      ).toBe('OCCUPIED');
+      await request(server)
+        .delete(`/api/v1/orders/${order.id}`)
+        .set('Authorization', auth(waiterA))
+        .expect(400);
+      for (const status of ['PREPARING', 'READY', 'DELIVERED']) {
+        await request(server)
+          .patch(`/api/v1/orders/${order.id}`)
+          .set('Authorization', auth(waiterA))
+          .send({ status })
+          .expect(200);
+      }
+      expect(
+        (await prisma.order.findUniqueOrThrow({ where: { id: order.id } }))
+          .status,
+      ).toBe('COMPLETED');
+      expect(
+        (
+          await prisma.restaurantTable.findUniqueOrThrow({
+            where: { id: tableAId },
+          })
+        ).status,
+      ).toBe('AVAILABLE');
+      await prisma.product.update({
+        where: { id: productAId },
+        data: { preparationStation: 'NONE' },
+      });
+    });
+
+    it('delivers events to two authenticated devices and isolates other branches', async () => {
+      const sockets: Socket[] = [];
+      const connect = async (session: AuthSession) => {
+        const socket = io(`${await app.getUrl()}/realtime`, {
+          auth: { token: session.token },
+          transports: ['websocket'],
+          autoConnect: false,
+        });
+        sockets.push(socket);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('Socket authentication timeout')),
+            5000,
+          );
+          socket.once('realtime.connected', () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          socket.once('connect_error', (error) => {
+            clearTimeout(timer);
+            reject(new Error(String(error)));
+          });
+          socket.connect();
+        });
+        return socket;
+      };
+      try {
+        const [first, second, other] = await Promise.all([
+          connect(cashierA),
+          connect(waiterA),
+          connect(adminB),
+        ]);
+        const foreign = jest.fn();
+        other.on('order.created', foreign);
+        const receive = (socket: Socket) =>
+          new Promise<unknown>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error('Event delivery timeout')),
+              5000,
+            );
+            socket.once('order.created', (payload) => {
+              clearTimeout(timer);
+              resolve(payload);
+            });
+          });
+        const received = Promise.all([receive(first), receive(second)]);
+        app
+          .get(RealtimeGateway)
+          .emitOrderEvent(branchAId, 'order.created', { id: 'delivery-test' });
+        expect(await received).toEqual([
+          { id: 'delivery-test' },
+          { id: 'delivery-test' },
+        ]);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(foreign).not.toHaveBeenCalled();
+      } finally {
+        sockets.forEach((socket) => socket.disconnect());
+      }
+    });
+
+    it('routes production tickets by kitchen and bar station', async () => {
+      await prisma.product.update({
+        where: { id: productAId },
+        data: { preparationStation: 'KITCHEN' },
+      });
+      await prisma.product.update({
+        where: { id: productBId },
+        data: { preparationStation: 'BAR' },
+      });
+      const order = await createOrder(waiterA, {
+        items: [
+          { productId: productAId, quantity: 1 },
+          { productId: productBId, quantity: 1 },
+        ],
+      });
+      for (const [kind, productId] of [
+        ['kitchen', productAId],
+        ['bar', productBId],
+      ]) {
+        const result = await request(server)
+          .get(`/api/v1/print/order/${order.id}/${kind}`)
+          .set('Authorization', auth(cashierA))
+          .expect(200);
+        const ticket = responseData<{ items: Array<{ id: string }> }>(result);
+        expect(ticket.items).toHaveLength(1);
+        expect(ticket.items[0].id).toBe(
+          order.items.find((item) => item.productId === productId)?.id,
+        );
+      }
+    });
+
+    it('subtracts stock for every repeated product line', async () => {
+      const before = await prisma.inventoryItem.findUniqueOrThrow({
+        where: { id: inventoryItemId },
+      });
+      const order = await createOrder(waiterA, {
+        items: [
+          { productId: inventoryProductId, quantity: 1, notes: 'uno' },
+          { productId: inventoryProductId, quantity: 1, notes: 'dos' },
+        ],
+      });
+      await pay(cashierA, order.id, Number(order.total));
+      const after = await prisma.inventoryItem.findUniqueOrThrow({
+        where: { id: inventoryItemId },
+      });
+      expect(Number(after.currentStock)).toBe(Number(before.currentStock) - 2);
+    });
+
+    it('supports cashier and superadmin child entry and prevents duplicate overtime checkout', async () => {
+      await prisma.setting.createMany({
+        data: [
+          {
+            branchId: branchAId,
+            key: 'child_hourly_product_id',
+            value: productAId,
+          },
+          {
+            branchId: branchAId,
+            key: 'child_extra_half_hour_product_id',
+            value: productBId,
+          },
+        ],
+      });
+      for (const session of [cashierA, superAdmin]) {
+        const entry = await request(server)
+          .post('/api/v1/child-access')
+          .set('Authorization', auth(session))
+          .send({
+            branchId: branchAId,
+            childName: 'Prueba entrega',
+            guardianName: 'Tutor prueba',
+            contractedMinutes: 60,
+          })
+          .expect(201);
+        const child = responseData<{
+          id: string;
+          orderId: string;
+          accessCode: string;
+          baseAmount: string;
+        }>(entry);
+        expect(Number(child.baseAmount)).toBe(99);
+        await prisma.childAccess.update({
+          where: { id: child.id },
+          data: { entryTime: new Date(Date.now() - 76 * 60000) },
+        });
+        const checkout = () =>
+          request(server)
+            .patch(`/api/v1/child-access/${child.id}/checkout`)
+            .set('Authorization', auth(session))
+            .send({ accessCode: child.accessCode });
+        const responses = await Promise.all([checkout(), checkout()]);
+        expect(responses.filter((r) => r.status === 200)).toHaveLength(1);
+        expect(responses.some((r) => [400, 409].includes(r.status))).toBe(true);
+        const order = await prisma.order.findUniqueOrThrow({
+          where: { id: child.orderId },
+          include: { items: true },
+        });
+        expect(order.items).toHaveLength(2);
+        expect(Number(order.total)).toBe(148);
+        await pay(cashierA, order.id, 148);
+      }
+    });
+
+    it('charges overtime on a separate ticket after prepaid child entry without changing the original', async () => {
+      await prisma.product.update({
+        where: { id: productAId },
+        data: { preparationStation: 'NONE' },
+      });
+      const entry = await request(server)
+        .post('/api/v1/child-access')
+        .set('Authorization', auth(cashierA))
+        .send({
+          childName: 'Prepago QA',
+          guardianName: 'Tutor QA',
+          contractedMinutes: 60,
+        })
+        .expect(201);
+      const child = responseData<{
+        id: string;
+        orderId: string;
+        accessCode: string;
+      }>(entry);
+      await pay(cashierA, child.orderId, 99);
+      await prisma.childAccess.update({
+        where: { id: child.id },
+        data: { entryTime: new Date(Date.now() - 76 * 60000) },
+      });
+      const checkout = () =>
+        request(server)
+          .patch(`/api/v1/child-access/${child.id}/checkout`)
+          .set('Authorization', auth(cashierA))
+          .send({ accessCode: child.accessCode });
+      const [first, second] = await Promise.all([checkout(), checkout()]);
+      const success = [first, second].find(
+        (response) => response.status === 200,
+      );
+      expect(success).toBeDefined();
+      expect(
+        [first, second].filter((response) => response.status === 200),
+      ).toHaveLength(1);
+      const result = responseData<{
+        chargeOrderId: string;
+        access: { orderId: string };
+      }>(success!);
+      expect(result.chargeOrderId).not.toBe(child.orderId);
+      expect(result.access.orderId).toBe(child.orderId);
+      const extra = await prisma.order.findUniqueOrThrow({
+        where: { id: result.chargeOrderId },
+      });
+      expect(Number(extra.total)).toBe(49);
+      const original = await prisma.order.findUniqueOrThrow({
+        where: { id: child.orderId },
+        include: { payments: true },
+      });
+      expect(Number(original.total)).toBe(99);
+      expect(original.status).toBe('COMPLETED');
+      expect(original.payments).toHaveLength(1);
+      await pay(cashierA, extra.id, 49);
+    });
+
+    it('includes a concurrent payment in the cash close or rejects it without writing a payment', async () => {
+      await request(server)
+        .post('/api/v1/cash/open')
+        .set('Authorization', auth(adminB))
+        .send({ openingBalance: 0 })
+        .expect(201);
+      const order = await createOrder(adminB, {
+        branchId: branchBId,
+        items: [{ productId: productBId, quantity: 1 }],
+      });
+      const [payment, close] = await Promise.all([
+        request(server)
+          .post('/api/v1/payments')
+          .set('Authorization', auth(adminB))
+          .send({
+            orderId: order.id,
+            method: 'CARD',
+            amount: Number(order.total),
+          }),
+        request(server)
+          .patch('/api/v1/cash/close')
+          .set('Authorization', auth(adminB))
+          .send({ closingBalance: 0 }),
+      ]);
+      expect([201, 400, 409]).toContain(payment.status);
+      expect(close.status).toBe(200);
+      const shift = await prisma.shift.findFirstOrThrow({
+        where: { branchId: branchBId },
+        orderBy: { openedAt: 'desc' },
+        include: { payments: true },
+      });
+      expect(shift.closedAt).not.toBeNull();
+      expect(Number(shift.totalSales)).toBe(
+        shift.payments.reduce((sum, item) => sum + Number(item.amount), 0),
+      );
+      expect(await prisma.payment.count({ where: { orderId: order.id } })).toBe(
+        payment.status === 201 ? 1 : 0,
+      );
+    });
+
+    it('preserves menu price and production station on edits', async () => {
+      await request(server)
+        .patch(`/api/v1/products/${productBId}`)
+        .set('Authorization', auth(adminA))
+        .send({ price: 27.5, preparationStation: 'BAR' })
+        .expect(200);
+      const result = await request(server)
+        .get(`/api/v1/products/${productBId}`)
+        .set('Authorization', auth(cashierA))
+        .expect(200);
+      const product = responseData<{
+        price: string;
+        preparationStation: string;
+      }>(result);
+      expect(Number(product.price)).toBe(27.5);
+      expect(product.preparationStation).toBe('BAR');
     });
   });
 

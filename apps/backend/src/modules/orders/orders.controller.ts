@@ -159,6 +159,10 @@ export class OrdersController {
     @CurrentUser('branchId') userBranchId?: string,
     @CurrentUser('id') userId?: string,
   ) {
-    await this.ordersService.cancel(id, userBranchId, userId);
+    const order = await this.ordersService.cancel(id, userBranchId, userId);
+    this.realtime.emitOrderEvent(order.branchId, 'order.cancelled', {
+      id: order.id,
+      status: order.status,
+    });
   }
 }

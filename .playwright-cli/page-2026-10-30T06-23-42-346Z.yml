@@ -1,0 +1,134 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary [ref=f2e3]:
+      - generic [ref=f2e8]:
+        - paragraph [ref=f2e9]: PlayCoffee
+        - paragraph [ref=f2e10]: Management OS
+      - navigation [ref=f2e11]:
+        - paragraph [ref=f2e12]: Menu Principal
+        - link "Dashboard" [ref=f2e13] [cursor=pointer]:
+          - /url: /
+        - link "Caja / POS" [ref=f2e20] [cursor=pointer]:
+          - /url: /pos
+        - link "Corte de Caja" [ref=f2e28] [cursor=pointer]:
+          - /url: /cash
+        - link "Catalogo" [ref=f2e34] [cursor=pointer]:
+          - /url: /products
+        - link "Mesas" [ref=f2e40] [cursor=pointer]:
+          - /url: /tables
+        - link "Comandero" [ref=f2e44] [cursor=pointer]:
+          - /url: /orders
+        - link "Control Infantil" [ref=f2e49] [cursor=pointer]:
+          - /url: /child-access
+        - link "Reservas" [ref=f2e54] [cursor=pointer]:
+          - /url: /reservations
+        - link "Inventario" [ref=f2e58] [cursor=pointer]:
+          - /url: /inventory
+        - link "Reportes" [ref=f2e64] [cursor=pointer]:
+          - /url: /reports
+        - link "Usuarios" [ref=f2e68] [cursor=pointer]:
+          - /url: /users
+        - link "Configuracion" [ref=f2e82] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=f2e88]:
+        - generic [ref=f2e89]: AS
+        - generic [ref=f2e91]:
+          - paragraph [ref=f2e92]: Admin System
+          - generic [ref=f2e93]: SUPER_ADMIN
+        - button "Cerrar sesion" [ref=f2e94]
+    - generic [ref=f2e98]:
+      - banner [ref=f2e99]:
+        - generic [ref=f2e100]:
+          - textbox "Buscar..." [ref=f2e105]
+          - button "Notificaciones" [ref=f2e106]
+      - main [ref=f2e110]:
+        - generic [ref=f2e111]:
+          - generic [ref=f2e112]:
+            - generic [ref=f2e113]:
+              - generic [ref=f2e114]:
+                - heading "Caja / POS" [level=1] [ref=f2e115]
+                - paragraph [ref=f2e116]: Registra órdenes y procesa pagos
+              - generic [ref=f2e117]: Conectado
+            - generic [ref=f2e315]: Orden PC-MVUL68QV-18832D pagada correctamente
+            - textbox "Buscar producto..." [ref=f2e124]
+            - generic [ref=f2e125]:
+              - button "Todos" [ref=f2e126]
+              - button "Bebidas" [ref=f2e162]
+              - button "Alimentos" [ref=f2e163]
+              - button "Postres" [ref=f2e164]
+            - generic [ref=f2e127]:
+              - button "Sin impresion especial ☕ 30 minutos adicionales $49.00" [ref=f2e317]:
+                - generic [ref=f2e318]: Sin impresion especial
+                - generic [ref=f2e319]: ☕
+                - paragraph [ref=f2e320]: 30 minutos adicionales
+                - paragraph [ref=f2e321]: $49.00
+              - button "Sin impresion especial ☕ Acceso infantil 1 hora $99.00" [ref=f2e322]:
+                - generic [ref=f2e323]: Sin impresion especial
+                - generic [ref=f2e324]: ☕
+                - paragraph [ref=f2e325]: Acceso infantil 1 hora
+                - paragraph [ref=f2e326]: $99.00
+              - button "Sin impresion especial ☕ Avocado Toast $110.00" [ref=f2e327]:
+                - generic [ref=f2e328]: Sin impresion especial
+                - generic [ref=f2e329]: ☕
+                - paragraph [ref=f2e330]: Avocado Toast
+                - paragraph [ref=f2e331]: $110.00
+              - button "Popular Sin impresion especial ☕ Cappuccino $65.00" [ref=f2e332]:
+                - generic [ref=f2e333]: Popular
+                - generic [ref=f2e334]: Sin impresion especial
+                - generic [ref=f2e335]: ☕
+                - paragraph [ref=f2e336]: Cappuccino
+                - paragraph [ref=f2e337]: $65.00
+              - button "Sin impresion especial ☕ Cheesecake $75.00" [ref=f2e338]:
+                - generic [ref=f2e339]: Sin impresion especial
+                - generic [ref=f2e340]: ☕
+                - paragraph [ref=f2e341]: Cheesecake
+                - paragraph [ref=f2e342]: $75.00
+              - button "Sin impresion especial ☕ Brownie $60.00" [ref=f2e343]:
+                - generic [ref=f2e344]: Sin impresion especial
+                - generic [ref=f2e345]: ☕
+                - paragraph [ref=f2e346]: Brownie
+                - paragraph [ref=f2e347]: $60.00
+              - button "Popular Sin impresion especial ☕ Latte $70.00" [ref=f2e348]:
+                - generic [ref=f2e349]: Popular
+                - generic [ref=f2e350]: Sin impresion especial
+                - generic [ref=f2e351]: ☕
+                - paragraph [ref=f2e352]: Latte
+                - paragraph [ref=f2e353]: $70.00
+              - button "Sin impresion especial ☕ Waffle $95.00" [ref=f2e354]:
+                - generic [ref=f2e355]: Sin impresion especial
+                - generic [ref=f2e356]: ☕
+                - paragraph [ref=f2e357]: Waffle
+                - paragraph [ref=f2e358]: $95.00
+              - button "Sin impresion especial ☕ Americano $45.00" [ref=f2e359]:
+                - generic [ref=f2e360]: Sin impresion especial
+                - generic [ref=f2e361]: ☕
+                - paragraph [ref=f2e362]: Americano
+                - paragraph [ref=f2e363]: $45.00
+              - button "Popular Sin impresion especial ☕ Matcha Latte $85.00" [ref=f2e364]:
+                - generic [ref=f2e365]: Popular
+                - generic [ref=f2e366]: Sin impresion especial
+                - generic [ref=f2e367]: ☕
+                - paragraph [ref=f2e368]: Matcha Latte
+                - paragraph [ref=f2e369]: $85.00
+          - generic [ref=f2e130]:
+            - generic [ref=f2e131]:
+              - generic [ref=f2e132]: Carrito
+              - generic [ref=f2e138]: 0 items
+            - generic [ref=f2e139]:
+              - generic [ref=f2e140]: Mesa
+              - combobox [ref=f2e143]:
+                - generic: Sin mesa / para llevar
+            - generic [ref=f2e370]:
+              - paragraph [ref=f2e375]: Carrito vacío
+              - paragraph [ref=f2e376]: Selecciona productos
+            - generic [ref=f2e154]:
+              - generic [ref=f2e155]:
+                - generic [ref=f2e156]: Subtotal
+                - generic [ref=f2e157]: $0.00
+              - generic [ref=f2e158]:
+                - generic [ref=f2e159]: Total
+                - generic [ref=f2e160]: $0.00
+              - button "Cobrar" [disabled]
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=f2e161]

@@ -1,0 +1,28 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - heading "Play Coffee OS" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Sistema de gestión café
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - heading "Iniciar sesión" [level=3] [ref=e12]
+        - paragraph [ref=e13]: Ingresa tus credenciales para acceder al sistema
+      - generic [ref=e15]:
+        - tablist [ref=e16]:
+          - tab "Correo y contraseña" [selected] [ref=e17]
+          - tab "PIN rápido" [ref=e18]
+        - tabpanel "Correo y contraseña" [ref=e19]:
+          - generic [ref=e20]:
+            - generic [ref=e21]:
+              - text: Correo electrónico
+              - textbox "correo@playcoffee.mx" [ref=e22]
+            - generic [ref=e23]:
+              - text: Contraseña
+              - generic [ref=e24]:
+                - textbox "••••••••" [ref=e25]
+                - button [ref=e26]
+            - button "Iniciar sesión" [ref=e30]
+    - paragraph [ref=e31]: Play Coffee OS · v1.0.0
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=e32]

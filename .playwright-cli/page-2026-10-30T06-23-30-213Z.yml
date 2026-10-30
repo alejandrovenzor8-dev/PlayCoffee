@@ -1,0 +1,205 @@
+- generic:
+  - generic:
+    - complementary:
+      - generic:
+        - generic:
+          - paragraph: PlayCoffee
+          - paragraph: Management OS
+      - navigation:
+        - paragraph: Menu Principal
+        - link:
+          - /url: /
+          - generic: Dashboard
+        - link:
+          - /url: /pos
+          - generic: Caja / POS
+        - link:
+          - /url: /cash
+          - generic: Corte de Caja
+        - link:
+          - /url: /products
+          - generic: Catalogo
+        - link:
+          - /url: /tables
+          - generic: Mesas
+        - link:
+          - /url: /orders
+          - generic: Comandero
+        - link:
+          - /url: /child-access
+          - generic: Control Infantil
+        - link:
+          - /url: /reservations
+          - generic: Reservas
+        - link:
+          - /url: /inventory
+          - generic: Inventario
+        - link:
+          - /url: /reports
+          - generic: Reportes
+        - link:
+          - /url: /users
+          - generic: Usuarios
+        - link:
+          - /url: /settings
+          - generic: Configuracion
+      - generic:
+        - generic:
+          - generic: AS
+          - generic:
+            - paragraph: Admin System
+            - generic: SUPER_ADMIN
+          - button
+    - generic:
+      - banner:
+        - generic:
+          - generic:
+            - textbox:
+              - /placeholder: Buscar...
+          - button
+      - main:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - heading [level=1]: Caja / POS
+                - paragraph: Registra órdenes y procesa pagos
+              - generic: Conectado
+            - generic:
+              - textbox:
+                - /placeholder: Buscar producto...
+            - generic:
+              - button: Todos
+              - button: Bebidas
+              - button: Alimentos
+              - button: Postres
+            - generic:
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: 30 minutos adicionales
+                - paragraph: $49.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Acceso infantil 1 hora
+                - paragraph: $99.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Avocado Toast
+                - paragraph: $110.00
+              - button:
+                - generic: Popular
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Cappuccino
+                - paragraph: $65.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Cheesecake
+                - paragraph: $75.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Brownie
+                - paragraph: $60.00
+              - button:
+                - generic: Popular
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Latte
+                - paragraph: $70.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Waffle
+                - paragraph: $95.00
+              - button:
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Americano
+                - paragraph: $45.00
+              - button:
+                - generic: Popular
+                - generic: Sin impresion especial
+                - generic: ☕
+                - paragraph: Matcha Latte
+                - paragraph: $85.00
+          - generic:
+            - generic:
+              - generic: Carrito
+              - generic: 1 items
+            - generic:
+              - generic: Mesa
+              - combobox:
+                - generic: Sin mesa / para llevar
+            - generic:
+              - generic:
+                - generic:
+                  - paragraph: Cappuccino
+                  - paragraph: $65.00 c/u
+                - generic:
+                  - button
+                  - generic: "1"
+                  - button
+                - generic:
+                  - paragraph: $65.00
+                  - button
+            - generic:
+              - generic:
+                - generic: Subtotal
+                - generic: $65.00
+              - generic:
+                - generic: Total
+                - generic: $65.00
+              - button: Cobrar $71.50
+              - button: Limpiar carrito
+  - list
+  - alert
+  - dialog [ref=f2e242]:
+    - heading "Pagos del ticket" [level=2] [ref=f2e244]
+    - generic [ref=f2e245]:
+      - generic [ref=f2e246]:
+        - paragraph [ref=f2e247]: Total a cobrar
+        - paragraph [ref=f2e248]: $71.50
+        - paragraph [ref=f2e249]: Consumo $65.00 + propina $6.50
+        - generic [ref=f2e250]:
+          - generic [ref=f2e251]:
+            - paragraph [ref=f2e252]: Pagado
+            - paragraph [ref=f2e253]: $0.00
+          - generic [ref=f2e254]:
+            - paragraph [ref=f2e255]: Saldo
+            - paragraph [ref=f2e256]: $71.50
+      - generic [ref=f2e257]:
+        - paragraph [ref=f2e258]: Propina
+        - generic [ref=f2e259]:
+          - button "Sin propina" [ref=f2e260]
+          - button "10%" [ref=f2e261]
+          - button "15%" [ref=f2e262]
+          - button "20%" [ref=f2e263]
+      - generic [ref=f2e264]:
+        - paragraph [ref=f2e265]: Dividir cuenta
+        - generic [ref=f2e266]:
+          - 'button "Entre 2: $35.75" [active] [ref=f2e267]'
+          - 'button "Entre 3: $23.84" [ref=f2e268]'
+          - 'button "Entre 4: $17.88" [ref=f2e269]'
+        - paragraph [ref=f2e270]: Registra cada parte con su propio método de pago.
+      - generic [ref=f2e271]:
+        - paragraph [ref=f2e272]: Método de pago
+        - generic [ref=f2e273]:
+          - button "Efectivo" [ref=f2e274]
+          - button "Tarjeta" [ref=f2e278]
+          - button "Transferencia" [ref=f2e281]
+      - generic [ref=f2e285]:
+        - generic [ref=f2e286]:
+          - paragraph [ref=f2e287]: Monto a aplicar
+          - spinbutton "71.50" [ref=f2e300]: "35.75"
+        - generic [ref=f2e289]:
+          - paragraph [ref=f2e290]: Referencia
+          - textbox "Opcional" [ref=f2e301]
+    - generic [ref=f2e292]:
+      - button "Cancelar" [ref=f2e293]
+      - button "Agregar Pago" [ref=f2e294]
+    - button "Close" [ref=f2e295]

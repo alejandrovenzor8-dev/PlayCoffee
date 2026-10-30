@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateChildAccessDto } from './dto/create-child-access.dto';
 import { UpdateChildAccessDto } from './dto/create-child-access.dto';
@@ -326,50 +328,121 @@ export class ChildAccessService {
       );
     }
     const summary = this.calculateSummary(record, new Date());
-    const updatedRecord = await this.prisma.$transaction(async (tx) => {
-      let extraOrderItemId = record.extraOrderItemId;
-      if (summary.extraAmount > 0 && !extraOrderItemId) {
-        if (!record.orderId) {
-          throw new BadRequestException(
-            'Child access is not associated with an order',
+    const updatedRecord = await this.prisma
+      .$transaction(
+        async (tx) => {
+          // Claim checkout atomically so two devices cannot add the extra twice.
+          const claimed = await tx.childAccess.updateMany({
+            where: {
+              id,
+              exitTime: null,
+              status: { not: ChildAccessStatus.COMPLETED },
+            },
+            data: { exitTime: new Date() },
+          });
+          if (claimed.count !== 1) {
+            throw new BadRequestException('Child access is already completed');
+          }
+          let extraOrderItemId = record.extraOrderItemId;
+          let chargeOrderId = record.orderId;
+          if (summary.extraAmount > 0 && !extraOrderItemId) {
+            if (!record.orderId) {
+              throw new BadRequestException(
+                'Child access is not associated with an order',
+              );
+            }
+            const originalOrder = await tx.order.findFirst({
+              where: {
+                id: record.orderId,
+                branchId: record.branchId,
+                deletedAt: null,
+              },
+              include: { payments: true },
+            });
+            if (
+              !originalOrder ||
+              originalOrder.status === OrderStatus.CANCELLED
+            ) {
+              throw new BadRequestException(
+                'El ticket original no está disponible para cobrar extras.',
+              );
+            }
+            const paidAmount = originalOrder.payments
+              .filter((payment) => payment.status === 'COMPLETED')
+              .reduce((sum, payment) => sum + Number(payment.amount), 0);
+            if (
+              originalOrder.status === OrderStatus.COMPLETED ||
+              Math.round(paidAmount * 100) >=
+                Math.round(Number(originalOrder.total) * 100)
+            ) {
+              const extraOrder = await this.resolveChargeOrder(
+                tx,
+                record.branchId,
+                undefined,
+                userId,
+              );
+              chargeOrderId = extraOrder.id;
+              await tx.order.update({
+                where: { id: extraOrder.id },
+                data: {
+                  notes: `Extras infantiles de ${originalOrder.orderNumber}. Acceso ${record.accessCode}`,
+                },
+              });
+            }
+            const product = await this.getConfiguredProduct(
+              tx,
+              record.branchId,
+              'child_extra_half_hour_product_id',
+              '30 minutos adicionales',
+            );
+            const extraOrderItem = await this.addOrderItem(
+              tx,
+              chargeOrderId!,
+              product.id,
+              summary.extraHours,
+              Number(record.extraHalfHourRate ?? 49),
+              `30 minutos adicionales: ${record.childName}`,
+            );
+            extraOrderItemId = extraOrderItem.id;
+            await this.recalculateOrderTotals(tx, chargeOrderId!);
+          }
+
+          return tx.childAccess.update({
+            where: { id },
+            data: {
+              exitTime: new Date(),
+              type: ChildAccessType.EXIT,
+              status: ChildAccessStatus.COMPLETED,
+              extraAmount: summary.extraAmount,
+              totalAmount: summary.totalAmount,
+              extraOrderItemId,
+            },
+            include: {
+              extraOrderItem: { select: { orderId: true } },
+              order: {
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  status: true,
+                  total: true,
+                },
+              },
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch((error: unknown) => {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034'
+        ) {
+          throw new ConflictException(
+            'El acceso cambió en otro dispositivo. Actualiza antes de reintentar.',
           );
         }
-        await this.validateChargeOrder(tx, record.orderId, record.branchId);
-        const product = await this.getConfiguredProduct(
-          tx,
-          record.branchId,
-          'child_extra_half_hour_product_id',
-          '30 minutos adicionales',
-        );
-        const extraOrderItem = await this.addOrderItem(
-          tx,
-          record.orderId,
-          product.id,
-          summary.extraHours,
-          Number(record.extraHalfHourRate ?? 49),
-          `30 minutos adicionales: ${record.childName}`,
-        );
-        extraOrderItemId = extraOrderItem.id;
-        await this.recalculateOrderTotals(tx, record.orderId);
-      }
-
-      return tx.childAccess.update({
-        where: { id },
-        data: {
-          exitTime: new Date(),
-          type: ChildAccessType.EXIT,
-          status: ChildAccessStatus.COMPLETED,
-          extraAmount: summary.extraAmount,
-          totalAmount: summary.totalAmount,
-          extraOrderItemId,
-        },
-        include: {
-          order: {
-            select: { id: true, orderNumber: true, status: true, total: true },
-          },
-        },
+        throw error;
       });
-    });
 
     await this.audit.record({
       branchId: updatedRecord.branchId,
@@ -384,6 +457,15 @@ export class ChildAccessService {
     });
 
     const access = this.withRuntimeSummary(updatedRecord);
+    const chargeOrderId =
+      updatedRecord.extraOrderItem?.orderId ?? updatedRecord.orderId;
+    if (chargeOrderId && chargeOrderId !== updatedRecord.orderId) {
+      this.realtime.emitOrderEvent(updatedRecord.branchId, 'order.created', {
+        id: chargeOrderId,
+        status: OrderStatus.PENDING,
+        total: summary.extraAmount,
+      });
+    }
     this.realtime.emitChildAccessEvent(
       updatedRecord.branchId,
       'child_access.updated',
@@ -408,6 +490,7 @@ export class ChildAccessService {
 
     return {
       access,
+      chargeOrderId,
       chargeSummary: {
         baseAmount: Number(updatedRecord.baseAmount),
         extraAmount: summary.extraAmount,
@@ -553,7 +636,7 @@ export class ChildAccessService {
       data: {
         branchId,
         userId,
-        orderNumber: `PC-${Date.now().toString(36).toUpperCase()}`,
+        orderNumber: `PC-${Date.now().toString(36).toUpperCase()}-${randomUUID().slice(0, 8)}`,
         status: OrderStatus.PENDING,
         subtotal: 0,
         taxAmount: 0,

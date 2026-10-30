@@ -170,6 +170,28 @@ async function main() {
     });
   }
 
+  // Required charge products/settings for a new installation of Control Infantil.
+  for (const [id, name, price] of [
+    ['prod-child-hour', 'Acceso infantil 1 hora', 99],
+    ['prod-child-extra-30', '30 minutos adicionales', 49],
+  ] as const) {
+    await prisma.product.upsert({
+      where: { id },
+      update: {},
+      create: { id, name, price, preparationStation: 'NONE' },
+    });
+  }
+  for (const [key, value] of [
+    ['child_hourly_product_id', 'prod-child-hour'],
+    ['child_extra_half_hour_product_id', 'prod-child-extra-30'],
+  ]) {
+    await prisma.setting.upsert({
+      where: { branchId_key: { branchId: branch.id, key } },
+      update: {},
+      create: { branchId: branch.id, key, value, group: 'child_access' },
+    });
+  }
+
   const areas = [
     { id: 'area-salon', name: 'Salon Principal', color: '#2563eb', order: 0 },
     { id: 'area-terraza', name: 'Terraza', color: '#059669', order: 1 },
@@ -185,18 +207,69 @@ async function main() {
   }
 
   const tables = [
-    { id: 'table-salon-1', areaId: 'area-salon', number: '1', capacity: 4, posX: 80, posY: 80 },
-    { id: 'table-salon-2', areaId: 'area-salon', number: '2', capacity: 4, posX: 240, posY: 80 },
-    { id: 'table-salon-3', areaId: 'area-salon', number: '3', capacity: 6, posX: 400, posY: 80, width: 150 },
-    { id: 'table-terraza-1', areaId: 'area-terraza', number: 'T1', capacity: 2, posX: 90, posY: 120, shape: 'circle' },
-    { id: 'table-terraza-2', areaId: 'area-terraza', number: 'T2', capacity: 4, posX: 250, posY: 120, shape: 'circle' },
-    { id: 'table-infantil-1', areaId: 'area-infantil', number: 'K1', capacity: 6, posX: 120, posY: 120, width: 160 },
+    {
+      id: 'table-salon-1',
+      areaId: 'area-salon',
+      number: '1',
+      capacity: 4,
+      posX: 80,
+      posY: 80,
+    },
+    {
+      id: 'table-salon-2',
+      areaId: 'area-salon',
+      number: '2',
+      capacity: 4,
+      posX: 240,
+      posY: 80,
+    },
+    {
+      id: 'table-salon-3',
+      areaId: 'area-salon',
+      number: '3',
+      capacity: 6,
+      posX: 400,
+      posY: 80,
+      width: 150,
+    },
+    {
+      id: 'table-terraza-1',
+      areaId: 'area-terraza',
+      number: 'T1',
+      capacity: 2,
+      posX: 90,
+      posY: 120,
+      shape: 'circle',
+    },
+    {
+      id: 'table-terraza-2',
+      areaId: 'area-terraza',
+      number: 'T2',
+      capacity: 4,
+      posX: 250,
+      posY: 120,
+      shape: 'circle',
+    },
+    {
+      id: 'table-infantil-1',
+      areaId: 'area-infantil',
+      number: 'K1',
+      capacity: 6,
+      posX: 120,
+      posY: 120,
+      width: 160,
+    },
   ];
 
   for (const table of tables) {
     await prisma.restaurantTable.upsert({
       where: { id: table.id },
-      update: { ...table, status: 'AVAILABLE', isActive: true, deletedAt: null },
+      update: {
+        ...table,
+        status: 'AVAILABLE',
+        isActive: true,
+        deletedAt: null,
+      },
       create: table,
     });
   }

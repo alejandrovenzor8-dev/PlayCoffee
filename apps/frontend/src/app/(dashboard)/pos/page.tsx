@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getApiErrorMessage, productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
+import { cashApi, getApiErrorMessage, productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
 import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
+import { createPaymentAttemptId } from "@/lib/payment-id";
 import type { Product, Category } from "@/types/pos.types";
 import type { RestaurantTable } from "@/types/orders.types";
 import { Button } from "@/components/ui/button";
@@ -214,12 +215,10 @@ export default function PosPage() {
   const previewTipAmount = canChangeTip && paymentConfig.tipEnabled
     ? Math.round(basePayableTotal * tipPercentage) / 100
     : 0;
-  const payableTotal = paymentSummary?.total ?? basePayableTotal + previewTipAmount;
+  const payableTotal = canChangeTip ? Math.round((basePayableTotal + previewTipAmount) * 100) / 100 : basePayableTotal;
   const paidAmount = paymentSummary?.totalPaid ?? 0;
-  const remainingAmount = paymentSummary?.remainingAmount ?? payableTotal;
+  const remainingAmount = Math.max(0, Math.round((payableTotal - paidAmount) * 100) / 100);
   const hasPendingOrderItems = Boolean(currentOrder && cart.items.length > 0);
-  const mustFinishPartialPayment =
-    paymentSummary?.paymentStatus === "PARTIALLY_PAID" && !hasPendingOrderItems;
   const cashReceived = Number(receivedAmount || 0);
   const cashChange =
     paymentMethod === "CASH" ? Math.max(0, cashReceived - remainingAmount) : 0;
@@ -330,11 +329,15 @@ export default function PosPage() {
     const order = await ordersApi.create(orderData);
     const nextOrder = { id: order.id, orderNumber: order.orderNumber, status: order.status };
     setCurrentOrder(nextOrder);
+    // These items now belong to the persisted ticket, not to pending extras.
+    const selectedTableId = cart.tableId;
+    cart.clearCart();
+    cart.setTableId(selectedTableId);
     setPaymentSummary({
       orderId: order.id,
-      total: cartTotal,
+      total: Number(order.total),
       totalPaid: 0,
-      remainingAmount: cartTotal,
+      remainingAmount: Number(order.total),
       changeAmount: 0,
       paymentStatus: "UNPAID",
     });
@@ -358,6 +361,11 @@ export default function PosPage() {
     setPaymentError(null);
     let attemptedOrderId = currentOrder?.id ?? null;
     try {
+      const shift = await cashApi.getCurrent();
+      if (!shift || shift.closedAt) {
+        setPaymentError("Abre caja en Corte de Caja antes de empezar a cobrar.");
+        return;
+      }
       const order = await ensureOrder();
       if (!order) return;
       attemptedOrderId = order.id;
@@ -382,7 +390,7 @@ export default function PosPage() {
           ? Math.min(numericAmount, remainingAmount)
           : numericAmount;
 
-      paymentAttemptId.current ??= crypto.randomUUID();
+      paymentAttemptId.current ??= createPaymentAttemptId();
       const response = await paymentsApi.create({
         orderId: order.id,
         method: paymentMethod,
@@ -400,11 +408,7 @@ export default function PosPage() {
 
       if (response.summary.paymentStatus !== "PAID") return;
 
-      setTables((currentTables) =>
-        currentTables.map((table) =>
-          table.id === cart.tableId ? { ...table, status: "AVAILABLE" } : table
-        )
-      );
+      loadOperationalData();
 
       cart.clearCart();
       setCurrentOrder(null);
@@ -702,7 +706,7 @@ export default function PosPage() {
       <Dialog
         open={paymentOpen}
         onOpenChange={(open) => {
-          if (!open && mustFinishPartialPayment) return;
+          if (!open && isProcessing) return;
           setPaymentOpen(open);
         }}
       >
@@ -752,7 +756,7 @@ export default function PosPage() {
               <p className="mb-2 text-sm font-medium">Dividir cuenta</p>
               <div className="flex flex-wrap gap-2">
                 {[2, 3, 4].map((parts) => {
-                  const partAmount = Math.ceil((remainingAmount / parts) * 100) / 100;
+                  const partAmount = Math.ceil(Math.round(remainingAmount * 100) / parts) / 100;
                   return (
                     <Button
                       key={parts}
@@ -878,9 +882,9 @@ export default function PosPage() {
             <Button
               variant="outline"
               onClick={() => setPaymentOpen(false)}
-              disabled={isProcessing || mustFinishPartialPayment}
+              disabled={isProcessing}
             >
-              {hasPendingOrderItems ? "Volver al ticket" : "Cancelar"}
+              {hasPendingOrderItems || paymentSummary?.paymentStatus === "PARTIALLY_PAID" ? "Volver al ticket" : "Cancelar"}
             </Button>
             <Button onClick={handleAddPayment} disabled={isProcessing || remainingAmount <= 0}>
               {isProcessing ? (

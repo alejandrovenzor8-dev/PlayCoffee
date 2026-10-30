@@ -1,0 +1,81 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - complementary [ref=f1e3]:
+      - generic [ref=f1e8]:
+        - paragraph [ref=f1e9]: PlayCoffee
+        - paragraph [ref=f1e10]: Management OS
+      - navigation [ref=f1e11]:
+        - paragraph [ref=f1e12]: Menu Principal
+        - link "Dashboard" [ref=f1e13] [cursor=pointer]:
+          - /url: /
+        - link "Caja / POS" [ref=f1e22] [cursor=pointer]:
+          - /url: /pos
+        - link "Corte de Caja" [ref=f1e28] [cursor=pointer]:
+          - /url: /cash
+        - link "Catalogo" [ref=f1e34] [cursor=pointer]:
+          - /url: /products
+        - link "Mesas" [ref=f1e40] [cursor=pointer]:
+          - /url: /tables
+        - link "Comandero" [ref=f1e44] [cursor=pointer]:
+          - /url: /orders
+        - link "Control Infantil" [ref=f1e49] [cursor=pointer]:
+          - /url: /child-access
+        - link "Reservas" [ref=f1e54] [cursor=pointer]:
+          - /url: /reservations
+        - link "Inventario" [ref=f1e58] [cursor=pointer]:
+          - /url: /inventory
+        - link "Reportes" [ref=f1e64] [cursor=pointer]:
+          - /url: /reports
+        - link "Usuarios" [ref=f1e68] [cursor=pointer]:
+          - /url: /users
+        - link "Configuracion" [ref=f1e82] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=f1e88]:
+        - generic [ref=f1e89]: AS
+        - generic [ref=f1e91]:
+          - paragraph [ref=f1e92]: Admin System
+          - generic [ref=f1e93]: SUPER_ADMIN
+        - button "Cerrar sesion" [ref=f1e94]
+    - generic [ref=f1e98]:
+      - banner [ref=f1e99]:
+        - generic [ref=f1e100]:
+          - textbox "Buscar..." [ref=f1e105]
+          - button "Notificaciones" [ref=f1e106]
+      - main [ref=f1e110]:
+        - generic [ref=f1e111]:
+          - generic [ref=f1e113]:
+            - heading "Dashboard Ejecutivo" [level=1] [ref=f1e114]
+            - paragraph [ref=f1e115]: Resumen operativo - viernes, 30 de octubre de 2026
+          - generic [ref=f1e116]:
+            - generic [ref=f1e120]:
+              - paragraph [ref=f1e121]: Ventas Hoy
+              - paragraph [ref=f1e122]: $0.00
+            - generic [ref=f1e129]:
+              - paragraph [ref=f1e130]: Ordenes Hoy
+              - paragraph [ref=f1e131]: "0"
+            - generic [ref=f1e140]:
+              - paragraph [ref=f1e141]: Mesas Ocupadas
+              - paragraph [ref=f1e142]: "0"
+            - generic [ref=f1e149]:
+              - paragraph [ref=f1e150]: Ninos en Area
+              - paragraph [ref=f1e151]: "0"
+          - generic [ref=f1e156]:
+            - generic [ref=f1e157]:
+              - heading "Ventas Recientes" [level=3] [ref=f1e159]
+              - generic [ref=f1e163]: Sin ventas completadas en el periodo.
+            - generic [ref=f1e165]:
+              - heading "Ventas por Categoria" [level=3] [ref=f1e167]
+              - generic [ref=f1e168]: Sin categorias vendidas en el periodo.
+          - generic [ref=f1e172]:
+            - generic [ref=f1e173]:
+              - paragraph [ref=f1e174]: Ventas del Mes
+              - paragraph [ref=f1e175]: $0.00
+            - generic [ref=f1e176]:
+              - paragraph [ref=f1e177]: Ordenes del Mes
+              - paragraph [ref=f1e178]: "0"
+            - generic [ref=f1e179]:
+              - paragraph [ref=f1e180]: Ticket Promedio
+              - paragraph [ref=f1e181]: $0.00
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=f1e182]

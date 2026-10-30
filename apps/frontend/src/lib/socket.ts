@@ -1,6 +1,13 @@
 import { io, Socket } from "socket.io-client";
+import { useAuthStore } from "@/store/auth.store";
 
 let socket: Socket | null = null;
+
+useAuthStore.subscribe((state, previous) => {
+  if (!socket || state.accessToken === previous.accessToken) return;
+  socket.disconnect();
+  if (state.accessToken) socket.connect();
+});
 
 export type RealtimeStatus = "connected" | "reconnecting" | "disconnected";
 
@@ -14,20 +21,20 @@ function getWsUrl() {
 
 export function getSocket(): Socket {
   const wsUrl = getWsUrl();
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const token = useAuthStore.getState().accessToken;
 
   if (!socket) {
     socket = io(`${wsUrl}/realtime`, {
       autoConnect: false,
       transports: ["websocket", "polling"],
-      auth: { token },
+      auth: (callback) => callback({ token: useAuthStore.getState().accessToken }),
     });
   } else {
-    socket.auth = { token };
+    // A refreshed token must also be used on the next reconnection.
+    socket.auth = (callback) => callback({ token: useAuthStore.getState().accessToken });
   }
 
-  if (!socket.connected) socket.connect();
+  if (token && !socket.connected) socket.connect();
   return socket;
 }
 

@@ -498,7 +498,7 @@ export default function ChildrenPage() {
               </div>
               {checkoutResult.access?.orderId && (
                 <Button asChild className="w-full">
-                  <Link href={`/pos?orderId=${checkoutResult.access.orderId}`}>Ir a cobrar</Link>
+                  <Link href={`/pos?orderId=${checkoutResult.chargeOrderId ?? checkoutResult.access.orderId}`}>Ir a cobrar</Link>
                 </Button>
               )}
             </div>
