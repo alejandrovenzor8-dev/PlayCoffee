@@ -114,7 +114,10 @@ export class ReportsService {
     if (paidOrderIds.size === 0) return [];
 
     const items = await this.prisma.orderItem.findMany({
-      where: { orderId: { in: [...paidOrderIds] } },
+      where: {
+        orderId: { in: [...paidOrderIds] },
+        status: { not: 'CANCELLED' },
+      },
       include: { product: { include: { category: true } } },
     });
     const map = new Map<string, number>();

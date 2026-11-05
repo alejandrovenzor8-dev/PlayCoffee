@@ -103,11 +103,11 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
     server = app.getHttpServer();
     await seedSmokeData(prisma);
 
-    superAdmin = await login('super.smoke@example.com');
-    adminA = await login('admin-a.smoke@example.com');
-    adminB = await login('admin-b.smoke@example.com');
-    cashierA = await login('cashier-a.smoke@example.com');
-    waiterA = await login('waiter-a.smoke@example.com');
+    superAdmin = await login(`${prefix}-super.smoke@example.com`);
+    adminA = await login(`${prefix}-admin-a.smoke@example.com`);
+    adminB = await login(`${prefix}-admin-b.smoke@example.com`);
+    cashierA = await login(`${prefix}-cashier-a.smoke@example.com`);
+    waiterA = await login(`${prefix}-waiter-a.smoke@example.com`);
     await request(server)
       .post('/api/v1/cash/open')
       .set('Authorization', auth(cashierA))
@@ -115,10 +115,231 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
       .expect(201);
   });
 
+  afterEach(async () => {
+    // Isolate table occupancy between scenarios; these are disposable smoke fixtures.
+    if (!prisma) return;
+    await prisma.order.updateMany({
+      where: {
+        tableId: { in: [tableAId, tableBId] },
+        status: { notIn: ['COMPLETED', 'CANCELLED'] },
+      },
+      data: { status: 'CANCELLED' },
+    });
+    await prisma.restaurantTable.updateMany({
+      where: { id: { in: [tableAId, tableBId] } },
+      data: { status: 'AVAILABLE' },
+    });
+  });
+
   afterAll(async () => {
+    if (!prisma) {
+      if (app) await app.close();
+      return;
+    }
     await cleanupSmokeData(prisma);
     await prisma.$disconnect();
     await app.close();
+  });
+
+  it('saves new tables in an empty area, edits and deletes them atomically with branch and role checks', async () => {
+    const area = await prisma.tableArea.create({
+      data: { branchId: branchAId, name: `${prefix}-empty-layout` },
+    });
+    const save = (
+      session: AuthSession,
+      tables: unknown[],
+      deletedIds: string[] = [],
+    ) =>
+      request(server)
+        .post('/api/v1/tables/layout')
+        .set('Authorization', auth(session))
+        .send({ areaId: area.id, tables, deletedIds });
+    const first = {
+      areaId: area.id,
+      number: '1',
+      capacity: 4,
+      posX: 100,
+      posY: 100,
+      width: 120,
+      height: 120,
+      shape: 'rect',
+    };
+    await save(waiterA, [first]).expect(403);
+    await save(adminB, [first]).expect(400);
+    const created = responseData<Array<{ id: string }>>(
+      await save(cashierA, [first]).expect(201),
+    )[0];
+    const edited = { ...first, id: created.id, number: 'VIP', posX: 200 };
+    await save(adminA, [edited, { ...first, number: '2' }]).expect(201);
+    const saved = await prisma.restaurantTable.findMany({
+      where: { areaId: area.id, deletedAt: null },
+    });
+    expect(saved).toHaveLength(2);
+    expect(saved.find((table) => table.id === created.id)?.posX).toBe(200);
+    // Invalid rows roll back the whole layout, including preceding edits.
+    await save(cashierA, [
+      { ...edited, posX: 300 },
+      { ...first, areaId: areaBId },
+    ]).expect(400);
+    expect(
+      (
+        await prisma.restaurantTable.findUniqueOrThrow({
+          where: { id: created.id },
+        })
+      ).posX,
+    ).toBe(200);
+    await save(adminA, [{ ...edited, number: '2' }]).expect(400);
+    const other = saved.find((table) => table.id !== created.id)!;
+    await prisma.restaurantTable.update({
+      where: { id: created.id },
+      data: { status: 'OCCUPIED' },
+    });
+    await save(adminA, [edited], [other.id]).expect(201);
+    expect(
+      (
+        await prisma.restaurantTable.findUniqueOrThrow({
+          where: { id: created.id },
+        })
+      ).status,
+    ).toBe('OCCUPIED');
+    await save(adminA, [], [created.id]).expect(400);
+    await request(server)
+      .delete(`/api/v1/tables/${created.id}`)
+      .set('Authorization', auth(cashierA))
+      .expect(400);
+    await prisma.restaurantTable.update({
+      where: { id: created.id },
+      data: { status: 'AVAILABLE' },
+    });
+    await save(adminA, [], [created.id]).expect(201);
+    expect(
+      await prisma.restaurantTable.count({
+        where: { areaId: area.id, deletedAt: null },
+      }),
+    ).toBe(0);
+    await save(adminA, [{ ...first, capacity: 1.5 }]).expect(400);
+  });
+
+  it('creates active and inactive products using the exact catalog fields', async () => {
+    for (const isActive of [true, false]) {
+      const response = await request(server)
+        .post('/api/v1/products')
+        .set('Authorization', auth(adminA))
+        .send({
+          name: `${prefix}-catalog-${isActive}`,
+          price: 35,
+          taxRate: 16,
+          preparationStation: 'BAR',
+          trackInventory: false,
+          isFeatured: false,
+          isActive,
+        })
+        .expect(201);
+      expect(response.body.data.isActive).toBe(isActive);
+      await prisma.product.delete({ where: { id: response.body.data.id } });
+    }
+  });
+
+  it('queues printer tests without sales and restricts access to the administrator branch', async () => {
+    const ordersBefore = await prisma.order.count({
+      where: { branchId: branchAId },
+    });
+    const response = await request(server)
+      .post('/api/v1/print/test')
+      .set('Authorization', auth(adminA))
+      .send({
+        target: 'windows:///Caja%20Prueba',
+        width: '58mm',
+        type: 'CUSTOMER',
+      })
+      .expect(201);
+    const jobId = response.body.data.id as string;
+    const job = await prisma.printJob.findUniqueOrThrow({
+      where: { id: jobId },
+    });
+    expect(job.orderId).toBeNull();
+    expect(job.maxAttempts).toBe(1);
+    expect(job.printerTarget).toBe('windows:///Caja%20Prueba');
+    expect(await prisma.order.count({ where: { branchId: branchAId } })).toBe(
+      ordersBefore,
+    );
+    await request(server)
+      .get(`/api/v1/print/jobs/${jobId}`)
+      .set('Authorization', auth(adminB))
+      .expect(404);
+    await request(server)
+      .post('/api/v1/print/test')
+      .set('Authorization', auth(cashierA))
+      .send({ target: 'windows:///Caja', width: '80mm', type: 'BAR' })
+      .expect(403);
+    await request(server)
+      .post('/api/v1/print/test')
+      .set('Authorization', auth(adminA))
+      .send({ target: 'windows:///', width: '80mm', type: 'BAR' })
+      .expect(400);
+    await request(server)
+      .post('/api/v1/print/test')
+      .set('Authorization', auth(adminA))
+      .send({ target: 'http://example.test', width: '80mm', type: 'BAR' })
+      .expect(400);
+    await prisma.printJob.update({
+      where: { id: jobId },
+      data: { status: 'FAILED', lastError: 'Sin papel' },
+    });
+    const failed = await request(server)
+      .get(`/api/v1/print/jobs/${jobId}`)
+      .set('Authorization', auth(adminA))
+      .expect(200);
+    expect(failed.body.data).toMatchObject({
+      status: 'FAILED',
+      lastError: 'Sin papel',
+    });
+  });
+
+  it('reminds cashier and admins about an old open shift, scoped to their branch', async () => {
+    const shift = await prisma.shift.findFirstOrThrow({
+      where: { branchId: branchAId, closedAt: null },
+    });
+    try {
+      await prisma.shift.update({
+        where: { id: shift.id },
+        data: { openedAt: new Date(Date.now() - 48 * 60 * 60 * 1000) },
+      });
+      for (const session of [cashierA, adminA, superAdmin]) {
+        const response = await request(server)
+          .get('/api/v1/cash/closing-reminder')
+          .set('Authorization', auth(session))
+          .expect(200);
+        expect(response.body.data).toMatchObject({
+          shiftId: shift.id,
+          fromPreviousDay: true,
+          timezone: 'America/Mexico_City',
+        });
+      }
+      const otherBranch = await request(server)
+        .get('/api/v1/cash/closing-reminder')
+        .set('Authorization', auth(adminB))
+        .expect(200);
+      expect(otherBranch.body.data).toBeNull();
+      await request(server)
+        .get('/api/v1/cash/closing-reminder')
+        .set('Authorization', auth(waiterA))
+        .expect(403);
+      await prisma.shift.update({
+        where: { id: shift.id },
+        data: { closedAt: new Date() },
+      });
+      const closed = await request(server)
+        .get('/api/v1/cash/closing-reminder')
+        .set('Authorization', auth(cashierA))
+        .expect(200);
+      expect(closed.body.data).toBeNull();
+    } finally {
+      await prisma.shift.update({
+        where: { id: shift.id },
+        data: { openedAt: shift.openedAt, closedAt: null },
+      });
+    }
   });
 
   async function seedSmokeData(db: PrismaClient) {
@@ -156,7 +377,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         {
           id: superAdminId,
           branchId: branchAId,
-          email: 'super.smoke@example.com',
+          email: `${prefix}-super.smoke@example.com`,
           firstName: 'Super',
           lastName: 'Smoke',
           passwordHash,
@@ -165,7 +386,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         {
           id: adminAId,
           branchId: branchAId,
-          email: 'admin-a.smoke@example.com',
+          email: `${prefix}-admin-a.smoke@example.com`,
           firstName: 'Admin',
           lastName: 'A',
           passwordHash,
@@ -174,7 +395,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         {
           id: adminBId,
           branchId: branchBId,
-          email: 'admin-b.smoke@example.com',
+          email: `${prefix}-admin-b.smoke@example.com`,
           firstName: 'Admin',
           lastName: 'B',
           passwordHash,
@@ -183,7 +404,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         {
           id: cashierAId,
           branchId: branchAId,
-          email: 'cashier-a.smoke@example.com',
+          email: `${prefix}-cashier-a.smoke@example.com`,
           firstName: 'Cashier',
           lastName: 'A',
           passwordHash,
@@ -192,7 +413,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         {
           id: waiterAId,
           branchId: branchAId,
-          email: 'waiter-a.smoke@example.com',
+          email: `${prefix}-waiter-a.smoke@example.com`,
           firstName: 'Waiter',
           lastName: 'A',
           passwordHash,
@@ -240,6 +461,9 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
   }
 
   async function cleanupSmokeData(db: PrismaClient) {
+    await db.printJob.deleteMany({
+      where: { branchId: { in: [branchAId, branchBId] } },
+    });
     await db.cashMovement.deleteMany({
       where: { branchId: { in: [branchAId, branchBId] } },
     });
@@ -263,20 +487,20 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
     });
     await db.inventoryItem.deleteMany({ where: { id: inventoryItemId } });
     await db.restaurantTable.deleteMany({
-      where: { id: { in: [tableAId, tableBId] } },
+      where: { area: { branchId: { in: [branchAId, branchBId] } } },
     });
     await db.tableArea.deleteMany({
-      where: { id: { in: [areaAId, areaBId] } },
+      where: { branchId: { in: [branchAId, branchBId] } },
     });
     await db.user.deleteMany({
       where: {
         email: {
           in: [
-            'super.smoke@example.com',
-            'admin-a.smoke@example.com',
-            'admin-b.smoke@example.com',
-            'cashier-a.smoke@example.com',
-            'waiter-a.smoke@example.com',
+            `${prefix}-super.smoke@example.com`,
+            `${prefix}-admin-a.smoke@example.com`,
+            `${prefix}-admin-b.smoke@example.com`,
+            `${prefix}-cashier-a.smoke@example.com`,
+            `${prefix}-waiter-a.smoke@example.com`,
           ],
         },
       },
@@ -387,8 +611,8 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
     });
 
     it('keeps device sessions independent when one device logs out', async () => {
-      const deviceA = await login('cashier-a.smoke@example.com');
-      const deviceB = await login('cashier-a.smoke@example.com');
+      const deviceA = await login(`${prefix}-cashier-a.smoke@example.com`);
+      const deviceB = await login(`${prefix}-cashier-a.smoke@example.com`);
 
       const refreshedA = await request(server)
         .post('/api/v1/auth/refresh')
@@ -809,7 +1033,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         .patch(`/api/v1/orders/${cancelled.id}`)
         .set('Authorization', auth(waiterA))
         .send({ status: 'READY' })
-        .expect(400);
+        .expect(409);
 
       const completed = await createOrder(waiterA, {
         items: [{ productId: productAId, quantity: 1 }],
@@ -819,7 +1043,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         .patch(`/api/v1/orders/${completed.id}`)
         .set('Authorization', auth(waiterA))
         .send({ status: 'READY' })
-        .expect(400);
+        .expect(409);
     });
   });
 
@@ -854,53 +1078,44 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
       await pay(adminB, order.id, 1, 400);
     });
 
-    it('keeps prepaid kitchen orders active until delivered and prevents cancellation', async () => {
+    it('closes paid kitchen orders and frees the table without reusing their history', async () => {
       await prisma.product.update({
         where: { id: productAId },
         data: { preparationStation: 'KITCHEN' },
       });
-      const order = await createOrder(waiterA, {
-        tableId: tableAId,
-        items: [{ productId: productAId, quantity: 1 }],
-      });
-      await pay(cashierA, order.id, Number(order.total));
-      expect(
-        (await prisma.order.findUniqueOrThrow({ where: { id: order.id } }))
-          .status,
-      ).not.toBe('COMPLETED');
-      expect(
-        (
-          await prisma.restaurantTable.findUniqueOrThrow({
-            where: { id: tableAId },
-          })
-        ).status,
-      ).toBe('OCCUPIED');
-      await request(server)
-        .delete(`/api/v1/orders/${order.id}`)
-        .set('Authorization', auth(waiterA))
-        .expect(400);
-      for (const status of ['PREPARING', 'READY', 'DELIVERED']) {
+      try {
+        const order = await createOrder(waiterA, {
+          tableId: tableAId,
+          items: [{ productId: productAId, quantity: 1 }],
+        });
+        await pay(cashierA, order.id, Number(order.total));
+        expect(
+          (await prisma.order.findUniqueOrThrow({ where: { id: order.id } }))
+            .status,
+        ).toBe('COMPLETED');
+        expect(
+          (
+            await prisma.restaurantTable.findUniqueOrThrow({
+              where: { id: tableAId },
+            })
+          ).status,
+        ).toBe('AVAILABLE');
         await request(server)
-          .patch(`/api/v1/orders/${order.id}`)
+          .delete(`/api/v1/orders/${order.id}`)
           .set('Authorization', auth(waiterA))
-          .send({ status })
-          .expect(200);
+          .expect(409);
+        const next = await createOrder(waiterA, {
+          tableId: tableAId,
+          items: [{ productId: productBId, quantity: 1 }],
+        });
+        expect(next.id).not.toBe(order.id);
+        expect(next.items.map((item) => item.productId)).toEqual([productBId]);
+      } finally {
+        await prisma.product.update({
+          where: { id: productAId },
+          data: { preparationStation: 'NONE' },
+        });
       }
-      expect(
-        (await prisma.order.findUniqueOrThrow({ where: { id: order.id } }))
-          .status,
-      ).toBe('COMPLETED');
-      expect(
-        (
-          await prisma.restaurantTable.findUniqueOrThrow({
-            where: { id: tableAId },
-          })
-        ).status,
-      ).toBe('AVAILABLE');
-      await prisma.product.update({
-        where: { id: productAId },
-        data: { preparationStation: 'NONE' },
-      });
     });
 
     it('delivers events to two authenticated devices and isolates other branches', async () => {
@@ -1066,7 +1281,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
       }
     });
 
-    it('charges overtime on a separate ticket after prepaid child entry without changing the original', async () => {
+    it('blocks final payment before child checkout and adds overtime to the original ticket', async () => {
       await prisma.product.update({
         where: { id: productAId },
         data: { preparationStation: 'NONE' },
@@ -1085,7 +1300,7 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         orderId: string;
         accessCode: string;
       }>(entry);
-      await pay(cashierA, child.orderId, 99);
+      await pay(cashierA, child.orderId, 99, 409);
       await prisma.childAccess.update({
         where: { id: child.id },
         data: { entryTime: new Date(Date.now() - 76 * 60000) },
@@ -1107,20 +1322,20 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         chargeOrderId: string;
         access: { orderId: string };
       }>(success!);
-      expect(result.chargeOrderId).not.toBe(child.orderId);
+      expect(result.chargeOrderId).toBe(child.orderId);
       expect(result.access.orderId).toBe(child.orderId);
       const extra = await prisma.order.findUniqueOrThrow({
         where: { id: result.chargeOrderId },
       });
-      expect(Number(extra.total)).toBe(49);
+      expect(Number(extra.total)).toBe(148);
       const original = await prisma.order.findUniqueOrThrow({
         where: { id: child.orderId },
         include: { payments: true },
       });
-      expect(Number(original.total)).toBe(99);
-      expect(original.status).toBe('COMPLETED');
-      expect(original.payments).toHaveLength(1);
-      await pay(cashierA, extra.id, 49);
+      expect(Number(original.total)).toBe(148);
+      expect(original.status).not.toBe('COMPLETED');
+      expect(original.payments).toHaveLength(0);
+      await pay(cashierA, extra.id, 148);
     });
 
     it('includes a concurrent payment in the cash close or rejects it without writing a payment', async () => {
@@ -1200,6 +1415,82 @@ describeSmoke('PlayCoffee staging smoke e2e', () => {
         .set('Authorization', auth(adminA))
         .send({ firstName: 'Nope' })
         .expect(403);
+    });
+  });
+
+  describe('cashier documents permissions', () => {
+    it('lets waiter print enabled prebill but restricts business receipts and configuration to authorized roles', async () => {
+      await request(server)
+        .put('/api/v1/print/config')
+        .set('Authorization', auth(adminA))
+        .send({
+          cashierPrinter: 'windows:///Caja QA',
+          kitchenPrinter: 'windows:///Cocina QA',
+          barPrinter: 'windows:///Barra QA',
+          width: '80mm',
+          autoKitchen: false,
+          autoBar: false,
+          autoCustomer: false,
+          cashierMode: 'CUSTOMER_AND_BUSINESS',
+          confirmClose: false,
+          allowReprint: true,
+        })
+        .expect(200);
+      await request(server)
+        .put('/api/v1/print/config')
+        .set('Authorization', auth(waiterA))
+        .send({})
+        .expect(403);
+      const policy = await request(server)
+        .get('/api/v1/print/cashier-policy')
+        .set('Authorization', auth(waiterA))
+        .expect(200);
+      expect(responseData<Record<string, unknown>>(policy)).not.toHaveProperty(
+        'cashierPrinter',
+      );
+      const order = await createOrder(waiterA, {
+        items: [{ productId: productAId, quantity: 1 }],
+      });
+      const prebill = await request(server)
+        .post(`/api/v1/print/order/${order.id}/prebill`)
+        .set('Authorization', auth(waiterA))
+        .send({ requestId: randomUUID() })
+        .expect(201);
+      expect(
+        responseData<{ printerTarget: string }>(prebill).printerTarget,
+      ).toBe('windows:///Caja QA');
+      await request(server)
+        .get(`/api/v1/print/order/${order.id}/business-receipt`)
+        .set('Authorization', auth(waiterA))
+        .expect(403);
+      await request(server)
+        .post(`/api/v1/print/order/${order.id}/business-receipt/print`)
+        .set('Authorization', auth(waiterA))
+        .send({ requestId: randomUUID(), reason: 'Not cashier' })
+        .expect(403);
+      await request(server)
+        .post(`/api/v1/print/order/${order.id}/prebill`)
+        .set('Authorization', auth(waiterA))
+        .send({})
+        .expect(400);
+      await request(server)
+        .get(`/api/v1/print/order/${order.id}/prebill`)
+        .set('Authorization', auth(adminB))
+        .expect(404);
+      await pay(cashierA, order.id, Number(order.total));
+      const receipt = await request(server)
+        .get(`/api/v1/print/order/${order.id}/business-receipt`)
+        .set('Authorization', auth(cashierA))
+        .expect(200);
+      expect(
+        responseData<{ document: { cashierDocument: { kind: string } } }>(
+          receipt,
+        ).document.cashierDocument.kind,
+      ).toBe('BUSINESS');
+      await request(server)
+        .get(`/api/v1/print/order/${order.id}/business-receipt`)
+        .set('Authorization', auth(adminB))
+        .expect(404);
     });
   });
 });

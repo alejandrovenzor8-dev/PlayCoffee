@@ -1,3 +1,4 @@
+import { isTransactionConflict } from '../../common/transaction-conflict';
 import {
   BadRequestException,
   Injectable,
@@ -87,6 +88,7 @@ export class ChildAccessService {
     dto: CreateChildAccessDto & { branchId: string },
     userId?: string,
   ) {
+    const { tableId, ...accessData } = dto;
     const accessMode = dto.accessMode ?? ChildAccessMode.HOURLY;
     if (accessMode !== ChildAccessMode.HOURLY) {
       throw new BadRequestException('Unlimited child access is not available');
@@ -129,12 +131,68 @@ export class ChildAccessService {
     const hourlyRate = baseHourRate;
     const accessCode = await this.generateAccessCode();
     const record = await this.prisma.$transaction(async (tx) => {
+      if (dto.requestId) {
+        // Serializes retries before any order or charge is created.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${dto.requestId}))::text`;
+        const previous = await tx.childAccess.findUnique({
+          where: { requestId: dto.requestId },
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderNumber: true,
+                status: true,
+                total: true,
+              },
+            },
+          },
+        });
+        if (previous) {
+          if (previous.branchId !== dto.branchId)
+            throw new ConflictException('Referencia de otra sucursal');
+          return previous;
+        }
+      }
+      let tableOrderId = dto.orderId;
+      if (tableId) {
+        await tx.$queryRaw`SELECT id FROM restaurant_tables WHERE id = ${tableId} FOR UPDATE`;
+        const table = await tx.restaurantTable.findFirst({
+          where: {
+            id: tableId,
+            isActive: true,
+            deletedAt: null,
+            area: { branchId: dto.branchId },
+          },
+        });
+        if (!table)
+          throw new BadRequestException('Mesa no disponible en esta sucursal');
+        const active = await tx.order.findFirst({
+          where: {
+            tableId,
+            deletedAt: null,
+            status: { notIn: ['COMPLETED', 'CANCELLED'] },
+          },
+        });
+        if (dto.orderId && dto.orderId !== active?.id)
+          throw new ConflictException('La mesa cambió de ticket');
+        tableOrderId = active?.id;
+      }
       const order = await this.resolveChargeOrder(
         tx,
         dto.branchId,
-        dto.orderId,
+        tableOrderId,
         userId,
       );
+      if (tableId) {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { tableId, isTakeaway: false },
+        });
+        await tx.restaurantTable.update({
+          where: { id: tableId },
+          data: { status: 'OCCUPIED' },
+        });
+      }
       const productSettingKey = 'child_hourly_product_id';
       const productLabel = 'Acceso infantil 1 hora';
       const siblingCount = await tx.childAccess.count({
@@ -177,7 +235,7 @@ export class ChildAccessService {
 
       return tx.childAccess.create({
         data: {
-          ...dto,
+          ...accessData,
           orderId: order.id,
           baseOrderItemId: baseOrderItem.id,
           guardianPhone: dto.guardianPhone ?? '',
@@ -217,6 +275,9 @@ export class ChildAccessService {
     });
 
     const summary = this.withRuntimeSummary(record);
+    this.realtime.emitOrderEvent(record.branchId, 'order.updated', {
+      id: record.orderId,
+    });
     this.realtime.emitChildAccessEvent(
       record.branchId,
       'child_access.created',
@@ -258,6 +319,12 @@ export class ChildAccessService {
       regularAmount - Number(current.siblingDiscountAmount),
     );
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (current.orderId)
+        await this.validateChargeOrder(tx, current.orderId, branchId);
+      const fresh = await tx.childAccess.findFirst({
+        where: { id, branchId, exitTime: null },
+      });
+      if (!fresh) throw new ConflictException('El acceso ya terminó');
       if (current.baseOrderItemId) {
         await tx.orderItem.update({
           where: { id: current.baseOrderItemId },
@@ -331,6 +398,9 @@ export class ChildAccessService {
     const updatedRecord = await this.prisma
       .$transaction(
         async (tx) => {
+          if (record.orderId) {
+            await tx.$queryRaw`SELECT id FROM orders WHERE id = ${record.orderId} AND "branchId" = ${record.branchId} FOR UPDATE`;
+          }
           // Claim checkout atomically so two devices cannot add the extra twice.
           const claimed = await tx.childAccess.updateMany({
             where: {
@@ -433,10 +503,7 @@ export class ChildAccessService {
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       )
       .catch((error: unknown) => {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2034'
-        ) {
+        if (isTransactionConflict(error)) {
           throw new ConflictException(
             'El acceso cambió en otro dispositivo. Actualiza antes de reintentar.',
           );
@@ -527,7 +594,10 @@ export class ChildAccessService {
   ) {
     const elapsedMinutes = Math.max(
       0,
-      Math.floor((at.getTime() - record.entryTime.getTime()) / 60000),
+      Math.floor(
+        ((record.exitTime ?? at).getTime() - record.entryTime.getTime()) /
+          60000,
+      ),
     );
     const contractedMinutes = record.contractedMinutes ?? 0;
     const remainingMinutes =
@@ -539,6 +609,12 @@ export class ChildAccessService {
     let extraHours = 0;
     if (record.exitTime) {
       status = ChildAccessStatus.COMPLETED;
+      if (
+        record.accessMode === ChildAccessMode.HOURLY &&
+        elapsedMinutes >= contractedMinutes + record.graceMinutes + 1
+      ) {
+        extraHours = Math.ceil((elapsedMinutes - contractedMinutes) / 30);
+      }
     } else if (record.accessMode === ChildAccessMode.HOURLY) {
       if (elapsedMinutes >= contractedMinutes + record.graceMinutes + 1) {
         status = ChildAccessStatus.OVERTIME;
@@ -620,7 +696,7 @@ export class ChildAccessService {
       select: { value: true },
     });
     const value = Number(setting?.value);
-    return Number.isFinite(value) ? value : fallback;
+    return setting && Number.isFinite(value) ? value : fallback;
   }
 
   private async resolveChargeOrder(
@@ -655,9 +731,10 @@ export class ChildAccessService {
     orderId: string,
     branchId: string,
   ) {
+    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND "branchId" = ${branchId} FOR UPDATE`;
     const order = await tx.order.findFirst({
       where: { id: orderId, branchId, deletedAt: null },
-      select: { id: true, branchId: true, status: true },
+      include: { payments: true },
     });
     if (!order) throw new NotFoundException('Order not found for this branch');
     if (
@@ -668,6 +745,10 @@ export class ChildAccessService {
         'Child access charges cannot be added to paid or cancelled orders',
       );
     }
+    if (order.payments.some((p) => p.status === 'COMPLETED'))
+      throw new ConflictException(
+        'La cuenta tiene pagos; no se pueden cambiar cargos infantiles',
+      );
     return order;
   }
 
@@ -729,7 +810,7 @@ export class ChildAccessService {
     orderId: string,
   ) {
     const totals = await tx.orderItem.aggregate({
-      where: { orderId },
+      where: { orderId, status: { not: 'CANCELLED' } },
       _sum: { totalPrice: true },
     });
     const subtotal = this.roundMoney(Number(totals._sum.totalPrice ?? 0));

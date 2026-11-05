@@ -23,6 +23,7 @@ describe('OrdersService', () => {
 
   function setup() {
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
       restaurantTable: {
         findFirst: jest.fn().mockResolvedValue({ id: 'table-1' }),
         update: jest.fn().mockResolvedValue({ id: 'table-1' }),
@@ -31,6 +32,7 @@ describe('OrdersService', () => {
         findMany: jest.fn().mockResolvedValue([product]),
       },
       order: {
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockImplementation(({ data }) =>
           Promise.resolve({
             id: 'order-1',

@@ -41,6 +41,34 @@ export class CashService {
     return shift ? this.toShiftSummary(shift) : null;
   }
 
+  async getClosingReminder(branchId: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    // This is polled by each cashier: do not load all payments/movements.
+    const shift = await this.prisma.shift.findFirst({
+      where: { branchId, closedAt: null },
+      orderBy: { openedAt: 'asc' },
+      select: {
+        id: true,
+        openedAt: true,
+        branch: { select: { timezone: true } },
+      },
+    });
+    if (!shift) return null;
+    const timezone = shift.branch.timezone;
+    const date = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return {
+      shiftId: shift.id,
+      openedAt: shift.openedAt,
+      timezone,
+      fromPreviousDay: date.format(shift.openedAt) !== date.format(new Date()),
+    };
+  }
+
   async addMovement(branchId: string, userId: string, dto: CashMovementDto) {
     if (!branchId) throw new BadRequestException('branchId is required');
     if (!dto.reason?.trim()) {

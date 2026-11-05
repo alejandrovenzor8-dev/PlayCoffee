@@ -41,5 +41,5 @@ try { $frontend = (Invoke-WebRequest -Uri "http://127.0.0.1:$frontendPort" -UseB
     Logs = (Join-Path $data 'logs')
 } | Format-List
 
-$httpsHealthy = $processStatus.https -ne $false
+$httpsHealthy = $config['HTTPS_ENABLED'] -ne 'true' -or $processStatus.https -eq $true
 if (-not ($processStatus.backend -and $processStatus.frontend -and $processStatus.printAgent -and $httpsHealthy -and $database -and $frontend)) { exit 1 }

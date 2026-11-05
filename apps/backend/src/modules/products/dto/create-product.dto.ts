@@ -12,6 +12,7 @@ import { Type } from 'class-transformer';
 import { PreparationStation } from '@prisma/client';
 
 export class CreateProductDto {
+  @ApiPropertyOptional() @IsBoolean() @IsOptional() isActive?: boolean;
   @ApiPropertyOptional() @IsString() @IsOptional() categoryId?: string;
   @ApiProperty() @IsString() @IsNotEmpty() name: string;
   @ApiPropertyOptional() @IsString() @IsOptional() description?: string;

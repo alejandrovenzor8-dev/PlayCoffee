@@ -50,6 +50,11 @@ export class CashController {
     return this.cashService.addMovement(branchId, userId, dto);
   }
 
+  @Get('closing-reminder')
+  closingReminder(@CurrentUser('branchId') branchId: string) {
+    return this.cashService.getClosingReminder(branchId);
+  }
+
   @Patch('close')
   close(
     @Body() dto: CloseShiftDto,

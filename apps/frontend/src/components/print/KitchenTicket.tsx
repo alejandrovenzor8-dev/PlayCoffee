@@ -1,4 +1,3 @@
-import { formatDate } from "@/lib/utils";
 import type { PrintTicketDocument } from "@/types/print.types";
 
 export function KitchenTicket({ document }: { document: PrintTicketDocument }) {
@@ -12,10 +11,15 @@ export function ProductionTicket({
   document: PrintTicketDocument;
   title: string;
 }) {
+  const localTime = (value: string) => new Date(value).toLocaleString('es-MX', { timeZone: document.order.timezone ?? 'America/Mexico_City' });
   return (
     <article className="ticket-body ticket-production">
       <header className="ticket-center ticket-section">
+        <h1>PLAYCOFFEE</h1>
         <h2 className="ticket-station">{title}</h2>
+        {document.dispatch?.kind === 'REPRINT' && <strong>REIMPRESIÓN</strong>}
+        {document.dispatch?.kind === 'CANCELLATION' && <strong>CANCELACIÓN / CORRECCIÓN</strong>}
+        {document.dispatch?.reason && <p>Motivo: {document.dispatch.reason}</p>}
         <p className="ticket-order">{document.order.orderNumber}</p>
       </header>
 
@@ -25,9 +29,12 @@ export function ProductionTicket({
           <strong>{document.order.table ?? "Para llevar"}</strong>
         </div>
         <div className="ticket-row">
-          <span>Hora</span>
-          <span>{formatDate(document.order.createdAt, { dateStyle: undefined, timeStyle: "short" })}</span>
+          <span>Pedido</span>
+          <span>{localTime(document.order.createdAt)}</span>
         </div>
+        <div className="ticket-row"><span>Área</span><span>{document.order.area ?? 'Mostrador'}</span></div>
+        <p className="break-all">Comanda: {document.dispatch?.batchId ?? 'Vista previa sin enviar'}</p>
+        <p>Envío: {document.dispatch?.sentAt ? localTime(document.dispatch.sentAt) : 'Pendiente'}</p>
         {document.order.waiter && (
           <div className="ticket-row">
             <span>Mesero</span>
@@ -52,7 +59,7 @@ export function ProductionTicket({
                   + {modifier.quantity} {modifier.name}
                 </p>
               ))}
-              {item.notes && <p className="ticket-command-note">Nota: {item.notes}</p>}
+              {item.notes && <p className="ticket-command-note whitespace-pre-wrap break-words">Nota: {item.notes}</p>}
             </div>
           ))
         )}

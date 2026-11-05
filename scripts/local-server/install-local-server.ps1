@@ -7,7 +7,11 @@ param(
     [switch]$DisableHttps,
     [switch]$SkipCertificateTrust,
     [switch]$RegisterStartup,
-    [switch]$ConfigureFirewall
+    [switch]$ConfigureFirewall,
+    [string]$RuntimeDirectory,
+    [string]$PostgresBin,
+    [string]$PnpmPath,
+    [switch]$InitializeNewDatabase
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,10 +49,11 @@ $requiresAdministrator = [bool]($RegisterStartup -or $ConfigureFirewall)
     -LanAddress $LanAddress `
     -DatabaseUrl $DatabaseUrl `
     -HttpsPort $HttpsPort `
+    -PnpmPath $PnpmPath `
     -RequireAdministrator:$requiresAdministrator
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Node.js no esta instalado o no esta en PATH' }
-if (-not (Get-Command corepack.cmd -ErrorAction SilentlyContinue)) { throw 'Corepack no esta disponible' }
+if (-not $PnpmPath -and -not (Get-Command corepack.cmd -ErrorAction SilentlyContinue)) { throw 'Corepack no esta disponible' }
 if (-not (Get-Service postgresql* -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running')) {
     throw 'PostgreSQL no esta ejecutandose como servicio de Windows'
 }
@@ -87,6 +92,8 @@ if ($certificate) {
     $lines += "TLS_ROOT_CERT_PATH=$($certificate.RootCertificatePath)"
     $lines += "TLS_ROOT_CERT_THUMBPRINT=$($certificate.RootCertificateThumbprint)"
 }
+if ($RuntimeDirectory) { $lines += "PLAYCOFFEE_NODE_DIRECTORY=$RuntimeDirectory" }
+if ($PostgresBin) { $lines += "PLAYCOFFEE_POSTGRES_BIN=$PostgresBin" }
 $configParent = Split-Path -Parent $ConfigPath
 if ($configParent) { New-Item -ItemType Directory -Force -Path $configParent | Out-Null }
 $lines | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
@@ -95,12 +102,18 @@ New-Item -ItemType Directory -Force -Path (Join-Path $DataDirectory 'logs'), (Jo
 
 $corepackDirectory = Join-Path $DataDirectory 'runtime\corepack'
 New-Item -ItemType Directory -Force -Path $corepackDirectory | Out-Null
-& corepack.cmd enable --install-directory $corepackDirectory pnpm
-if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar la version controlada de pnpm' }
-$env:Path = "$corepackDirectory;$env:Path"
+if ($PnpmPath) {
+    $env:Path = "$(Split-Path -Parent $PnpmPath);$env:Path"
+} else {
+    & corepack.cmd enable --install-directory $corepackDirectory pnpm
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar la version controlada de pnpm' }
+    $env:Path = "$corepackDirectory;$env:Path"
+    $PnpmPath = Join-Path $corepackDirectory 'pnpm.cmd'
+}
 
 $env:NEXT_PUBLIC_API_URL = $apiUrl
 $env:NEXT_PUBLIC_WS_URL = $apiUrl
+$env:DATABASE_URL = $DatabaseUrl
 $frontendProductionEnv = Join-Path $root 'apps\frontend\.env.production.local'
 @(
     "NEXT_PUBLIC_API_URL=$apiUrl",
@@ -110,12 +123,18 @@ Push-Location $root
 try {
     # --force evita que pnpm deje la instalacion a medias esperando una
     # confirmacion interactiva cuando debe reconstruir node_modules.
-    & corepack.cmd pnpm install --frozen-lockfile --force --prod=false
+    & $PnpmPath install --frozen-lockfile --force --prod=false
     if ($LASTEXITCODE -ne 0) { throw 'No se pudieron instalar las dependencias' }
-    & corepack.cmd pnpm db:generate
+    & $PnpmPath db:generate
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo generar Prisma Client' }
-    & corepack.cmd pnpm build
+    & $PnpmPath build
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo compilar PlayCoffee' }
+    if ($InitializeNewDatabase) {
+        & $PnpmPath db:migrate:deploy
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudieron aplicar las migraciones' }
+        & node (Join-Path $PSScriptRoot 'initialize-database.cjs')
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudo inicializar la base nueva' }
+    }
 } finally {
     Pop-Location
 }

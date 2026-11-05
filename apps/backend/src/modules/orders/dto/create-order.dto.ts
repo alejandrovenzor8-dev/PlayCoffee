@@ -1,3 +1,4 @@
+import { IsUUID, IsOptional as OptionalRequest } from 'class-validator';
 import {
   IsString,
   IsArray,
@@ -33,6 +34,7 @@ export class CreateOrderItemDto {
 }
 
 export class CreateOrderDto {
+  @IsUUID() @OptionalRequest() requestId?: string;
   @ApiProperty() @IsString() branchId: string;
   @ApiPropertyOptional() @IsString() @IsOptional() tableId?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() notes?: string;

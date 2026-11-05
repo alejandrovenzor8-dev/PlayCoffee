@@ -2,14 +2,13 @@
 
 import { useState } from "react";
 import { TableCanvas } from "./TableCanvas";
-import type { RestaurantTable, TableStatus } from "@/types/orders.types";
+import type { RestaurantTable } from "@/types/orders.types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Plus,
   Trash2,
@@ -18,11 +17,11 @@ import {
   X,
   Circle,
   Square,
-  Palette,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface LayoutEditorProps {
+  areaId: string;
+  isSaving: boolean;
   tables: RestaurantTable[];
   onTablesUpdate: (tables: RestaurantTable[]) => void;
   onSave: () => void;
@@ -30,6 +29,8 @@ interface LayoutEditorProps {
 }
 
 export function LayoutEditor({
+  areaId,
+  isSaving,
   tables,
   onTablesUpdate,
   onSave,
@@ -60,14 +61,24 @@ export function LayoutEditor({
 
   // Crear nueva mesa
   const handleCreateTable = () => {
+    let number = 1;
+    while (tables.some((table) => table.number === String(number))) number++;
+    let position = 0;
+    const coordinates = (index: number) => ({ x: 40 + (index % 4) * 170, y: 40 + Math.floor(index / 4) * 170 });
+    while (tables.some((table) => {
+      const { x, y } = coordinates(position);
+      return x < (table.posX ?? 0) + (table.width ?? 120) && x + 120 > (table.posX ?? 0) &&
+        y < (table.posY ?? 0) + (table.height ?? 120) && y + 120 > (table.posY ?? 0);
+    })) position++;
+    const { x, y } = coordinates(position);
     const newTable: RestaurantTable = {
-      id: `temp-${Date.now()}`,
-      areaId: tables[0]?.areaId || "",
-      number: `${tables.length + 1}`,
+      id: `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      areaId,
+      number: String(number),
       capacity: 4,
       status: "AVAILABLE",
-      posX: 100,
-      posY: 100,
+      posX: x,
+      posY: y,
       width: 120,
       height: 120,
       rotation: 0,
@@ -82,6 +93,7 @@ export function LayoutEditor({
   // Eliminar mesa
   const handleDeleteTable = () => {
     if (!selectedTable) return;
+    if (selectedTable.status === "OCCUPIED" || selectedTable.orders?.length) return;
     const updatedTables = tables.filter((t) => t.id !== selectedTable.id);
     onTablesUpdate(updatedTables);
     setSelectedTable(null);
@@ -102,7 +114,7 @@ export function LayoutEditor({
   };
 
   return (
-    <div className="h-full flex gap-4">
+    <fieldset disabled={isSaving} className="relative flex min-h-[600px] flex-col gap-4 border-0 p-0 lg:flex-row">
       {/* Canvas principal */}
       <div className="flex-1 border rounded-lg overflow-hidden bg-white">
         <TableCanvas
@@ -116,7 +128,7 @@ export function LayoutEditor({
       </div>
 
       {/* Panel de propiedades */}
-      <Card className="w-80 h-full overflow-auto">
+      <Card className="w-full overflow-auto lg:w-80 lg:shrink-0">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Propiedades</CardTitle>
@@ -280,32 +292,13 @@ export function LayoutEditor({
                 </div>
               </div>
 
-              {/* Estado */}
-              <div className="space-y-2">
-                <Label htmlFor="status">Estado</Label>
-                <Select
-                  value={editForm.status || "AVAILABLE"}
-                  onValueChange={(v: TableStatus) => updateTableProperty("status", v)}
-                >
-                  <SelectTrigger id="status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="AVAILABLE">Disponible</SelectItem>
-                    <SelectItem value="OCCUPIED">Ocupada</SelectItem>
-                    <SelectItem value="RESERVED">Reservada</SelectItem>
-                    <SelectItem value="MAINTENANCE">Mantenimiento</SelectItem>
-                    <SelectItem value="BLOCKED">Bloqueada</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
               {/* Eliminar mesa */}
               <Button
                 variant="destructive"
                 size="sm"
                 className="w-full"
                 onClick={handleDeleteTable}
+                disabled={selectedTable.status === "OCCUPIED" || !!selectedTable.orders?.length}
               >
                 <Trash2 className="h-4 w-4 mr-2" />
                 Eliminar Mesa
@@ -335,9 +328,9 @@ export function LayoutEditor({
         </Button>
         <Button onClick={onSave}>
           <Save className="h-4 w-4 mr-2" />
-          Guardar Cambios
+          {isSaving ? "Guardando..." : "Guardar Cambios"}
         </Button>
       </div>
-    </div>
+    </fieldset>
   );
 }

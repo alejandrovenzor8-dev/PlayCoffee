@@ -1,3 +1,4 @@
+import { IsUUID } from 'class-validator';
 import {
   IsString,
   IsNumber,
@@ -12,6 +13,8 @@ import { ChildAccessMode, ChildAccessType } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreateChildAccessDto {
+  @IsUUID() @IsOptional() requestId?: string;
+  @IsString() @IsOptional() tableId?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() branchId?: string;
   @ApiPropertyOptional() @IsString() @IsOptional() orderId?: string;
   @ApiProperty() @IsString() childName: string;

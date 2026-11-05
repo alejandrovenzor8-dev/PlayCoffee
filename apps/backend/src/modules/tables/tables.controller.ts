@@ -12,6 +12,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { TablesService } from './tables.service';
 import { CreateTableDto } from './dto/create-table.dto';
+import { SaveLayoutDto } from './dto/save-layout.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TableStatus, UserRoleEnum } from '@prisma/client';
@@ -62,6 +63,15 @@ export class TablesController {
     @CurrentUser('branchId') userBranchId?: string,
   ) {
     return this.tablesService.create(dto, userBranchId);
+  }
+
+  @Post('layout')
+  @Roles(UserRoleEnum.CASHIER)
+  saveLayout(
+    @Body() dto: SaveLayoutDto,
+    @CurrentUser('branchId') branchId?: string,
+  ) {
+    return this.tablesService.saveLayout(dto, branchId);
   }
 
   @Patch(':id')

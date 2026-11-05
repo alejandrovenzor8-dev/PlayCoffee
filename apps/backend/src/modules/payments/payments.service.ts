@@ -1,3 +1,4 @@
+import { isTransactionConflict } from '../../common/transaction-conflict';
 import {
   Injectable,
   NotFoundException,
@@ -23,6 +24,7 @@ type PaymentSummaryStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
 type PaymentWithSummary = {
   payment: unknown;
+  receipt?: { id: string; status: string; lastError: string | null } | null;
   summary: {
     orderId: string;
     total: number;
@@ -129,6 +131,7 @@ export class PaymentsService {
     const result = await this.prisma
       .$transaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT id FROM orders WHERE id = ${dto.orderId} AND "branchId" = ${branchId} FOR UPDATE`;
           const order = await tx.order.findFirst({
             where: {
               id: dto.orderId,
@@ -138,6 +141,7 @@ export class PaymentsService {
             include: {
               payments: true,
               items: {
+                where: { status: { not: OrderStatus.CANCELLED } },
                 include: {
                   product: {
                     include: {
@@ -256,6 +260,16 @@ export class PaymentsService {
             );
           }
 
+          if (this.roundMoney(appliedAmount) >= roundedRemaining) {
+            const policy = await this.printService.getCashierPolicy(
+              branchId,
+              tx,
+            );
+            if (policy.confirmClose && dto.closeConfirmed !== true)
+              throw new ConflictException(
+                'Confirma el cierre de cuenta antes de liquidar.',
+              );
+          }
           const payment = await tx.payment.create({
             data: {
               orderId: dto.orderId,
@@ -278,13 +292,17 @@ export class PaymentsService {
             payment,
           ]);
 
-          const pendingPreparation =
-            order.status !== OrderStatus.DELIVERED &&
-            order.items.some(
-              (item) => item.product.preparationStation !== 'NONE',
+          const closeOrder = summary.paymentStatus === 'PAID';
+          if (
+            closeOrder &&
+            (await tx.childAccess.count({
+              where: { orderId: order.id, exitTime: null },
+            }))
+          ) {
+            throw new ConflictException(
+              'Registra la salida de los niños y sus extras antes de cerrar la cuenta.',
             );
-          const closeOrder =
-            summary.paymentStatus === 'PAID' && !pendingPreparation;
+          }
           if (summary.paymentStatus === 'PAID') {
             await this.discountInventoryForPaidOrder(tx, order, userId);
 
@@ -307,7 +325,21 @@ export class PaymentsService {
             }
           }
 
+          const receipt = closeOrder
+            ? await this.printService.captureBusinessReceipt(
+                tx,
+                order.id,
+                branchId,
+              )
+            : null;
           return {
+            receipt: receipt
+              ? {
+                  id: receipt.id,
+                  status: receipt.status,
+                  lastError: receipt.lastError,
+                }
+              : null,
             order,
             closeOrder,
             payment: this.serializePayment(payment),
@@ -326,7 +358,7 @@ export class PaymentsService {
             'El pago ya está procesándose. Consulta el saldo antes de reintentar.',
           );
         }
-        if (this.isTransactionWriteConflict(error)) {
+        if (isTransactionConflict(error)) {
           throw new ConflictException(
             'Payment could not be processed because the order changed. Please retry.',
           );
@@ -372,14 +404,11 @@ export class PaymentsService {
             : result.order.status,
         },
       );
-      await this.printService.queuePaidCustomerTicket(
-        result.order.id,
-        result.order.branchId,
-      );
     }
 
     return {
       payment: result.payment,
+      receipt: result.receipt,
       summary: result.summary,
     };
   }
@@ -496,13 +525,6 @@ export class PaymentsService {
 
   private roundMoney(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
-  }
-
-  private isTransactionWriteConflict(error: unknown) {
-    return (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2034'
-    );
   }
 
   private async discountInventoryForPaidOrder(

@@ -28,6 +28,9 @@ function Set-PlayCoffeeEnvironment {
     foreach ($entry in $Values.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
     }
+    foreach ($key in @('PLAYCOFFEE_NODE_DIRECTORY', 'PLAYCOFFEE_POSTGRES_BIN')) {
+        if ($Values[$key]) { $env:Path = "$($Values[$key]);$env:Path" }
+    }
 }
 
 function Get-PlayCoffeeRuntimePath {
@@ -87,6 +90,10 @@ function Wait-PlayCoffeeUrl {
 function Get-PlayCoffeePostgresTool {
     param([Parameter(Mandatory)][string]$Name)
 
+    if ($env:PLAYCOFFEE_POSTGRES_BIN) {
+        $configured = Join-Path $env:PLAYCOFFEE_POSTGRES_BIN "$($Name -replace '\.exe$', '').exe"
+        if (Test-Path -LiteralPath $configured -PathType Leaf) { return $configured }
+    }
     $command = Get-Command $Name -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { getApiErrorMessage } from "@/lib/api";
+import { useForm, useWatch } from "react-hook-form";
 import {
   Dialog,
   DialogContent,
@@ -42,11 +43,13 @@ export function AreaFormDialog({
   onSave,
 }: AreaFormDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
-    watch,
+    control,
     setValue,
+    reset,
     formState: { errors },
   } = useForm({
     defaultValues: {
@@ -57,13 +60,24 @@ export function AreaFormDialog({
     },
   });
 
-  const selectedColor = watch("color");
+  useEffect(() => {
+    if (!open) return;
+    reset({ name: area?.name ?? "", description: area?.description ?? "",
+      color: area?.color ?? DEFAULT_COLORS[0], isActive: area?.isActive ?? true });
+    setSaveError(null);
+  }, [open, area, reset]);
+
+  const selectedColor = useWatch({ control, name: "color" });
+  const isActive = useWatch({ control, name: "isActive" });
 
   const onSubmit = async (data: any) => {
     setIsSubmitting(true);
+    setSaveError(null);
     try {
       await onSave(data);
       onOpenChange(false);
+    } catch (error) {
+      setSaveError(getApiErrorMessage(error, "No se pudo guardar el area."));
     } finally {
       setIsSubmitting(false);
     }
@@ -84,6 +98,7 @@ export function AreaFormDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {saveError && <p role="alert" className="text-sm text-destructive">{saveError}</p>}
           <div className="space-y-2">
             <Label htmlFor="name">Nombre *</Label>
             <Input
@@ -144,7 +159,7 @@ export function AreaFormDialog({
             </div>
             <Switch
               id="isActive"
-              checked={watch("isActive")}
+              checked={isActive}
               onCheckedChange={(checked) => setValue("isActive", checked)}
             />
           </div>

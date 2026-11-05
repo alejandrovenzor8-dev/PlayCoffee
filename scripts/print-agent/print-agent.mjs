@@ -34,13 +34,13 @@ function sendTcp(host, port, bytes) {
   });
 }
 
-function sendWindows(printerName, bytes, jobId) {
-  return new Promise(async (resolve, reject) => {
-    const spoolDir = path.join(dataDirectory, 'runtime', 'print-spool');
-    await mkdir(spoolDir, { recursive: true });
-    const spoolPath = path.join(spoolDir, `${jobId}.bin`);
-    await writeFile(spoolPath, bytes);
-    const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), 'send-windows-raw.ps1');
+async function sendWindows(printerName, bytes, jobId) {
+  const spoolDir = path.join(dataDirectory, 'runtime', 'print-spool');
+  await mkdir(spoolDir, { recursive: true });
+  const spoolPath = path.join(spoolDir, `${jobId}.bin`);
+  await writeFile(spoolPath, bytes);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), 'send-windows-raw.ps1');
+  return new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helper, '-PrinterName', printerName, '-DataPath', spoolPath], { windowsHide: true });
     let error = '';
     child.stderr.on('data', (chunk) => { error += chunk; });

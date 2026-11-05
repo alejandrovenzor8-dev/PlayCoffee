@@ -2,6 +2,7 @@ param(
     [string]$LanAddress,
     [string]$DatabaseUrl,
     [int]$HttpsPort = 3443,
+    [string]$PnpmPath,
     [switch]$RequireAdministrator
 )
 
@@ -18,7 +19,11 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $node = Get-Command node -ErrorAction SilentlyContinue
 $corepack = Get-Command corepack.cmd -ErrorAction SilentlyContinue
 Add-Check 'Node.js' ([bool]$node) $(if ($node) { (& node --version) } else { 'No encontrado en PATH' })
-Add-Check 'Corepack' ([bool]$corepack) $(if ($corepack) { (& corepack.cmd --version) } else { 'No encontrado en PATH' })
+if ($PnpmPath) {
+    Add-Check 'pnpm' (Test-Path -LiteralPath $PnpmPath -PathType Leaf) $PnpmPath
+} else {
+    Add-Check 'Corepack' ([bool]$corepack) $(if ($corepack) { (& corepack.cmd --version) } else { 'No encontrado en PATH' })
+}
 
 $postgresService = Get-Service postgresql* -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running' | Select-Object -First 1
 Add-Check 'Servicio PostgreSQL' ([bool]$postgresService) $(if ($postgresService) { $postgresService.Name } else { 'No hay un servicio PostgreSQL activo' })
@@ -50,6 +55,10 @@ if ($LanAddress) {
 
 $portInUse = Get-NetTCPConnection -LocalPort $HttpsPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 Add-Check "Puerto HTTPS $HttpsPort" (-not [bool]$portInUse) $(if ($portInUse) { "Ocupado por PID $($portInUse.OwningProcess)" } else { 'Disponible' })
+foreach ($applicationPort in @(3000, 3001)) {
+    $listener = Get-NetTCPConnection -LocalPort $applicationPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    Add-Check "Puerto $applicationPort" (-not [bool]$listener) $(if ($listener) { "Ocupado por PID $($listener.OwningProcess)" } else { 'Disponible' })
+}
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)

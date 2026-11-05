@@ -1,5 +1,12 @@
 "use client";
 
+import { OrderPaneSwitcher } from "@/components/orders/OrderPaneSwitcher";
+
+import { PreparationNotes } from "@/components/print/PreparationNotes";
+
+import { useCashierPrintPolicy } from "@/hooks/useCashierPrintPolicy";
+import { CashierTicketActions } from "@/components/print/CashierTicketActions";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cashApi, getApiErrorMessage, productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
@@ -74,6 +81,9 @@ const preparationStationLabels = {
 } as const;
 
 export default function PosPage() {
+  const { data: cashierPolicy } = useCashierPrintPolicy();
+  const [mobilePosView, setMobilePosView] = useState<"products" | "ticket">("products");
+  const [lastPaidOrderId, setLastPaidOrderId] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -100,6 +110,38 @@ export default function PosPage() {
   });
   const [tipPercentage, setTipPercentage] = useState(10);
   const paymentAttemptId = useRef<string | null>(null);
+  const submission = useRef<{ signature: string; id: string } | null>(null);
+  const mutationBusy = useRef(false);
+  const orderLoadVersion = useRef(0);
+  const activeOrderId = useRef<string | null>(null);
+  const currentOrderId = currentOrder?.id;
+  useEffect(() => { activeOrderId.current = currentOrderId ?? null; }, [currentOrderId]);
+  const requestIdFor = (payload: unknown) => {
+    const signature = JSON.stringify(payload);
+    if (submission.current?.signature !== signature) submission.current = { signature, id: createPaymentAttemptId() };
+    return submission.current.id;
+  };
+
+  const clearClosedOrder = useCallback(() => {
+    orderLoadVersion.current += 1;
+    activeOrderId.current = null;
+    useCartStore.getState().clearCart();
+    setCurrentOrder(null);
+    setMobilePosView("products");
+    setLinkedOrderId(null);
+    setPayments([]);
+    setPaymentSummary(null);
+    setPaymentOpen(false);
+    setPaymentAmount('');
+    setReceivedAmount('');
+    setReference('');
+    setPaymentError(null);
+    paymentAttemptId.current = null;
+    submission.current = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('orderId');
+    window.history.replaceState(null, '', url);
+  }, []);
 
   const cart = useCartStore();
   const { user } = useAuthStore();
@@ -140,14 +182,21 @@ export default function PosPage() {
   }, [branchId]);
 
   const refreshCurrentOrderPayments = useCallback(() => {
-    if (!currentOrder?.id) return;
-    paymentsApi.getByOrder(currentOrder.id)
-      .then((paymentInfo) => {
+    if (!currentOrderId) return;
+    const id = currentOrderId;
+    Promise.all([ordersApi.getOne(id), paymentsApi.getByOrder(id)])
+      .then(([order, paymentInfo]) => {
+        if (activeOrderId.current !== id) return;
+        if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+          clearClosedOrder();
+          return;
+        }
+        setCurrentOrder({ id: order.id, orderNumber: order.orderNumber, total: Number(order.total), status: order.status });
         setPayments(paymentInfo.payments ?? []);
         setPaymentSummary(paymentInfo.summary);
       })
       .catch(() => undefined);
-  }, [currentOrder]);
+  }, [currentOrderId, clearClosedOrder]);
 
   const realtimeEvents = useMemo(() => ({
     "table.updated": () => loadOperationalData(),
@@ -169,9 +218,12 @@ export default function PosPage() {
 
   useEffect(() => {
     loadOperationalData();
-  }, [loadOperationalData]);
+    const timer = window.setInterval(() => { loadOperationalData(); refreshCurrentOrderPayments(); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [loadOperationalData, refreshCurrentOrderPayments]);
 
   const loadExistingOrderForPayment = useCallback((orderId: string) => {
+    const version = ++orderLoadVersion.current;
     setIsProcessing(true);
     setPaymentError(null);
     Promise.all([
@@ -179,6 +231,10 @@ export default function PosPage() {
       paymentsApi.getByOrder(orderId),
     ])
       .then(([order, paymentInfo]) => {
+        if (version !== orderLoadVersion.current) return;
+        if (['COMPLETED', 'CANCELLED'].includes(order.status)) { clearClosedOrder(); setIsProcessing(false); return; }
+        useCartStore.getState().setTableId(order.tableId ?? undefined);
+        setMobilePosView("ticket");
         setCurrentOrder({
           id: order.id,
           orderNumber: order.orderNumber,
@@ -189,13 +245,14 @@ export default function PosPage() {
         setPaymentSummary(paymentInfo.summary);
       })
       .catch(() => {
+        if (version !== orderLoadVersion.current) return;
         setPaymentError("No se pudo cargar el ticket de la mesa.");
         setCurrentOrder(null);
         setPayments([]);
         setPaymentSummary(null);
       })
-      .finally(() => setIsProcessing(false));
-  }, []);
+      .finally(() => { if (version === orderLoadVersion.current) setIsProcessing(false); });
+  }, [clearClosedOrder]);
 
   useEffect(() => {
     if (!linkedOrderId) return;
@@ -240,12 +297,13 @@ export default function PosPage() {
   );
 
   const addCartItemsToCurrentOrder = async () => {
-    if (isProcessing || !currentOrder || cart.items.length === 0 || !canAddExtrasToCurrentOrder) return;
+    if (mutationBusy.current || isProcessing || !currentOrder || cart.items.length === 0 || !canAddExtrasToCurrentOrder) return;
+    mutationBusy.current = true;
     setIsProcessing(true);
     setPaymentError(null);
     const selectedTableId = cart.tableId;
     try {
-      await ordersApi.addItems(currentOrder.id, {
+      const addition = {
         items: cart.items.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
@@ -255,7 +313,8 @@ export default function PosPage() {
             quantity: modifier.quantity,
           })),
         })),
-      });
+      };
+      await ordersApi.addItems(currentOrder.id, { ...addition, requestId: requestIdFor({ orderId: currentOrder.id, ...addition }) });
       const updatedOrder = await ordersApi.getOne(currentOrder.id);
       const paymentInfo = await paymentsApi.getByOrder(currentOrder.id);
       setCurrentOrder({
@@ -267,6 +326,7 @@ export default function PosPage() {
       setPayments(paymentInfo.payments ?? []);
       setPaymentSummary(paymentInfo.summary);
       cart.clearCart();
+      submission.current = null;
       cart.setTableId(selectedTableId);
       loadOperationalData();
       setSuccessMsg(
@@ -279,11 +339,21 @@ export default function PosPage() {
       console.error(err);
       setPaymentError(getApiErrorMessage(err, "No se pudieron agregar los productos al ticket."));
     } finally {
+      mutationBusy.current = false;
       setIsProcessing(false);
     }
   };
 
   const handleTableSelection = (value: string) => {
+    orderLoadVersion.current += 1;
+    setLinkedOrderId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('orderId');
+    window.history.replaceState(null, '', url);
+    setPaymentAmount(''); setReceivedAmount(''); setReference(''); setPaymentError(null);
+    activeOrderId.current = null;
+    paymentAttemptId.current = null;
+    submission.current = null;
     if (value === "takeaway") {
       cart.setTableId(undefined);
       setCurrentOrder(null);
@@ -308,7 +378,7 @@ export default function PosPage() {
   };
 
   const ensureOrder = async () => {
-    if (currentOrder) return currentOrder;
+    if (currentOrder && !["COMPLETED", "CANCELLED"].includes(currentOrder.status ?? "")) return currentOrder;
     if (cart.items.length === 0) return;
 
     const orderData = {
@@ -326,7 +396,8 @@ export default function PosPage() {
       })),
     };
 
-    const order = await ordersApi.create(orderData);
+    const order = await ordersApi.create({ ...orderData, requestId: requestIdFor(orderData) });
+    submission.current = null;
     const nextOrder = { id: order.id, orderNumber: order.orderNumber, status: order.status };
     setCurrentOrder(nextOrder);
     // These items now belong to the persisted ticket, not to pending extras.
@@ -352,11 +423,13 @@ export default function PosPage() {
   };
 
   const handleAddPayment = async () => {
+    if (mutationBusy.current) return;
     if ((!currentOrder && cart.items.length === 0) || remainingAmount <= 0) return;
     if (currentOrder && cart.items.length > 0) {
       setPaymentError("Primero agrega los productos nuevos al ticket antes de cobrar.");
       return;
     }
+    mutationBusy.current = true;
     setIsProcessing(true);
     setPaymentError(null);
     let attemptedOrderId = currentOrder?.id ?? null;
@@ -390,6 +463,7 @@ export default function PosPage() {
           ? Math.min(numericAmount, remainingAmount)
           : numericAmount;
 
+      if (appliedAmount >= remainingAmount && cashierPolicy?.confirmClose && !window.confirm('Confirmar pago final, cerrar la cuenta y liberar la mesa?')) return;
       paymentAttemptId.current ??= createPaymentAttemptId();
       const response = await paymentsApi.create({
         orderId: order.id,
@@ -399,10 +473,11 @@ export default function PosPage() {
         reference: paymentMethod === "CASH" ? undefined : reference || undefined,
         tipPercentage: canChangeTip && paymentConfig.tipEnabled ? tipPercentage : undefined,
         idempotencyKey: paymentAttemptId.current,
+        closeConfirmed: cashierPolicy?.confirmClose ? true : undefined,
       });
       paymentAttemptId.current = null;
 
-      setPayments((current) => [...current, response.payment]);
+      setPayments((current) => [...current.filter(payment => payment.id !== response.payment.id), response.payment]);
       setPaymentSummary(response.summary);
       resetPaymentForm();
 
@@ -410,11 +485,8 @@ export default function PosPage() {
 
       loadOperationalData();
 
-      cart.clearCart();
-      setCurrentOrder(null);
-      setPayments([]);
-      setPaymentSummary(null);
-      setPaymentOpen(false);
+      clearClosedOrder();
+      setLastPaidOrderId(order.id);
       setSuccessMsg(`Orden ${order.orderNumber} pagada correctamente`);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
@@ -437,14 +509,16 @@ export default function PosPage() {
         setPaymentError(message);
       }
     } finally {
+      mutationBusy.current = false;
       setIsProcessing(false);
     }
   };
 
   return (
-    <div className="flex min-h-full flex-col gap-4 lg:-m-6 lg:h-[calc(100vh-4rem)] lg:flex-row lg:p-6">
+    <div className="flex h-full min-h-0 flex-col gap-3 lg:flex-row lg:gap-4">
+      <OrderPaneSwitcher value={mobilePosView} onChange={setMobilePosView} count={cart.itemCount()} />
       {/* Product panel */}
-      <div className="flex flex-1 flex-col min-w-0">
+      <div className={`${mobilePosView === "products" ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:flex`}>
         <PageHeader
           title="Caja / POS"
           description="Registra órdenes y procesa pagos"
@@ -457,6 +531,8 @@ export default function PosPage() {
             {successMsg}
           </div>
         )}
+
+        {lastPaidOrderId && <CashierTicketActions orderId={lastPaidOrderId} status="COMPLETED" />}
 
         {loadError && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -510,7 +586,7 @@ export default function PosPage() {
             No hay productos para los filtros seleccionados.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto">
+          <div className="grid min-h-24 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto">
             {filtered.map((product) => (
               <button
                 key={product.id}
@@ -540,18 +616,21 @@ export default function PosPage() {
       </div>
 
       {/* Cart panel */}
-      <div className="flex w-full flex-col rounded-xl border bg-card shadow-sm lg:w-80 lg:shrink-0">
-        <div className="flex items-center justify-between border-b px-4 py-3">
+      <div className={`${mobilePosView === "ticket" ? "flex" : "hidden"} min-h-0 w-full flex-1 flex-col overflow-y-auto rounded-xl border bg-card shadow-sm lg:flex lg:w-80 lg:flex-none`}>
+        <div className="flex shrink-0 items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2">
             <ShoppingCart className="h-4 w-4" />
             <span className="font-semibold text-sm">
               {currentOrder ? "Extras del ticket" : "Carrito"}
             </span>
           </div>
-          <Badge variant="secondary">{cart.itemCount()} items</Badge>
+          <div className="flex items-center gap-1">
+            <Badge variant="secondary">{cart.itemCount()} items</Badge>
+            {cart.items.length > 0 && <Button variant="ghost" size="icon" aria-label="Limpiar carrito" title="Limpiar carrito" disabled={isProcessing} onClick={() => { const tableId = cart.tableId; cart.clearCart(); cart.setTableId(tableId); }}><Trash2 className="h-4 w-4" /></Button>}
+          </div>
         </div>
 
-        <div className="border-b p-3 space-y-2">
+        <div className="shrink-0 border-b p-3 space-y-2">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Table2 className="h-4 w-4" />
             Mesa
@@ -559,6 +638,7 @@ export default function PosPage() {
           <Select
             value={cart.tableId ?? "takeaway"}
             onValueChange={handleTableSelection}
+            disabled={isProcessing}
           >
             <SelectTrigger>
               <SelectValue placeholder="Seleccionar mesa" />
@@ -587,7 +667,7 @@ export default function PosPage() {
         </div>
 
         {/* Cart items */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div role="region" aria-label="Productos de la comanda" tabIndex={0} className="min-h-24 flex-1 touch-pan-y space-y-2 overflow-y-auto overscroll-y-contain p-3 [scrollbar-gutter:stable]">
           {currentOrder && cart.items.length === 0 ? (
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
               <p className="font-semibold text-blue-900">Ticket cargado</p>
@@ -604,24 +684,28 @@ export default function PosPage() {
             </div>
           ) : (
             cart.items.map((item) => (
-              <div key={item.id} className="flex items-center gap-2 rounded-lg border p-2 text-sm">
-                <div className="flex-1 min-w-0">
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 text-sm">
+                <div className="w-full min-w-0">
                   <p className="font-medium truncate">{item.product.name}</p>
+                  <PreparationNotes name={item.product.name} quantity={item.quantity} value={item.notes} disabled={isProcessing} onChange={notes => cart.updateNotes(item.id, notes)} />
+                  {item.quantity > 1 && <Button size="sm" variant="outline" className="mt-1" disabled={isProcessing} onClick={() => cart.splitItem(item.id)}>Separar 1</Button>}
                   <p className="text-xs text-muted-foreground">
                     {formatCurrency(item.unitPrice)} c/u
                   </p>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
+                    aria-label={`Quitar una porcion de ${item.product.name}`}
                     onClick={() => cart.updateQuantity(item.id, item.quantity - 1)}
-                    className="flex h-10 w-10 items-center justify-center rounded border hover:bg-muted lg:h-8 lg:w-8"
+                    className="flex h-11 w-11 items-center justify-center rounded border hover:bg-muted lg:h-8 lg:w-8"
                   >
                     <Minus className="h-3 w-3" />
                   </button>
                   <span className="w-6 text-center font-bold text-sm">{item.quantity}</span>
                   <button
+                    aria-label={`Agregar una porcion de ${item.product.name}`}
                     onClick={() => cart.updateQuantity(item.id, item.quantity + 1)}
-                    className="flex h-10 w-10 items-center justify-center rounded border hover:bg-muted lg:h-8 lg:w-8"
+                    className="flex h-11 w-11 items-center justify-center rounded border hover:bg-muted lg:h-8 lg:w-8"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
@@ -629,8 +713,9 @@ export default function PosPage() {
                 <div className="text-right">
                   <p className="font-semibold text-sm">{formatCurrency(item.totalPrice)}</p>
                   <button
+                    aria-label={`Quitar ${item.product.name}`}
                     onClick={() => cart.removeItem(item.id)}
-                    className="flex h-10 w-10 items-center justify-center text-muted-foreground hover:text-destructive"
+                    className="flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-destructive"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -641,15 +726,7 @@ export default function PosPage() {
         </div>
 
         {/* Cart footer */}
-        <div className="border-t p-4 space-y-3">
-          {currentOrder && (
-            <div className="rounded-lg border bg-blue-50 p-3 text-xs text-blue-800">
-              <p className="font-semibold">Ticket {currentOrder.orderNumber}</p>
-              <p className="mt-1">
-                Los productos nuevos deben agregarse al ticket antes de cobrar.
-              </p>
-            </div>
-          )}
+        <div className="shrink-0 space-y-3 border-t p-3 lg:p-4">
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">
               {currentOrder ? "Extras por agregar" : "Subtotal"}
@@ -669,6 +746,7 @@ export default function PosPage() {
             </span>
           </div>
 
+          {currentOrder && cart.items.length === 0 && <CashierTicketActions orderId={currentOrder.id} status={currentOrder.status ?? "PENDING"} />}
           {currentOrder && cart.items.length > 0 && (
             <Button
               className="w-full"
@@ -681,7 +759,7 @@ export default function PosPage() {
             </Button>
           )}
 
-          <Button
+          {(!currentOrder || cart.items.length === 0) && <Button
             className="w-full"
             disabled={(cart.items.length === 0 && !currentOrder) || Boolean(currentOrder && cart.items.length > 0)}
             onClick={() => {
@@ -691,14 +769,9 @@ export default function PosPage() {
           >
             <CreditCard className="h-4 w-4 mr-2" />
             Cobrar {currentOrder || cart.items.length > 0 ? formatCurrency(payableTotal) : ""}
-          </Button>
+          </Button>}
 
-          {cart.items.length > 0 && (
-            <Button variant="ghost" size="sm" className="w-full text-muted-foreground" onClick={cart.clearCart}>
-              <Trash2 className="h-3 w-3 mr-1" />
-              Limpiar carrito
-            </Button>
-          )}
+
         </div>
       </div>
 

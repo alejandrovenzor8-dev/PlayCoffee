@@ -1,8 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { OrderPaneSwitcher } from "@/components/orders/OrderPaneSwitcher";
+
+import { PreparationNotes } from "@/components/print/PreparationNotes";
+
+import { CashierTicketActions } from "@/components/print/CashierTicketActions";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getApiErrorMessage, ordersApi, productsApi, tablesApi } from "@/lib/api";
+import { createPaymentAttemptId } from "@/lib/payment-id";
 import { getActiveBranchId } from "@/lib/branch";
 import { formatCurrency } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth.store";
@@ -44,13 +51,15 @@ import type { Product } from "@/types/pos.types";
 import type { Order, RestaurantTable } from "@/types/orders.types";
 
 type DraftItem = {
+  id: string;
   product: Product;
   quantity: number;
+  notes?: string;
 };
 
 const activeOrderStatuses = ["PENDING", "CONFIRMED", "PREPARING", "READY", "DELIVERED"];
 
-function getOpenOrder(table: RestaurantTable | null) {
+function getOpenOrder(table: RestaurantTable | null | undefined) {
   return table?.orders?.find((order) => activeOrderStatuses.includes(order.status)) ?? null;
 }
 
@@ -72,7 +81,7 @@ export default function TablesPage() {
     user?.role === "SUPER_ADMIN" || user?.role === "ADMIN" || user?.role === "CASHIER";
   const { areas, setAreas, selectedAreaId, selectArea } = useAreasStore();
   const { isEditMode, setEditMode, selectedTable, selectTable } = useTablesStore();
-  const { tables, loadTables, updateTableLocal, saveLayout, cancelChanges } = useTableLayout(
+  const { tables, loadTables, updateTableLocal, replaceTablesLocal, saveLayout, cancelChanges, isSaving: isSavingLayout, isLoading: tablesLoading, error: layoutError } = useTableLayout(
     selectedAreaId || "",
   );
 
@@ -84,9 +93,48 @@ export default function TablesPage() {
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [guestCount, setGuestCount] = useState("");
   const [productSearch, setProductSearch] = useState("");
+  const [mobileCommanderView, setMobileCommanderView] = useState<"products" | "ticket">("products");
   const [commanderOpen, setCommanderOpen] = useState(false);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const createBusy = useRef(false);
+  const sendBusy = useRef(false);
+  const commanderVersion = useRef(0);
+  const createAttempt = useRef<string | null>(null);
+  const additionAttempt = useRef<{ signature: string; id: string } | null>(null);
+  const currentOrderId = currentOrder?.id;
+  const selectedTableId = selectedOperationalTable?.id;
+
+  const refreshCommander = useCallback(() => {
+    if (!commanderOpen || !selectedTableId || createBusy.current || sendBusy.current) return;
+    const version = commanderVersion.current;
+    void (async () => {
+      const orderId = currentOrderId ?? getOpenOrder((await tablesApi.getAll(branchId)).find((t: RestaurantTable) => t.id === selectedTableId))?.id;
+      if (!orderId) return;
+      const order = await ordersApi.getOne(orderId);
+      if (version !== commanderVersion.current) return;
+      if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+        setCurrentOrder(null); setDraftItems([]); setGuestCount('');
+        createAttempt.current = null; additionAttempt.current = null;
+        setSelectedOperationalTable(table => table && ({ ...table, status: 'AVAILABLE', orders: [] }));
+      } else setCurrentOrder(order);
+    })().catch(() => undefined);
+  }, [commanderOpen, selectedTableId, currentOrderId, branchId]);
+
+  useEffect(() => {
+    if (!commanderOpen) return;
+    const timer = window.setInterval(refreshCommander, 15000);
+    return () => window.clearInterval(timer);
+  }, [commanderOpen, refreshCommander]);
+
+  useEffect(() => {
+    setEditMode(false);
+    useTablesStore.getState().resetChanges();
+    return () => {
+      useTablesStore.getState().setEditMode(false);
+      useTablesStore.getState().resetChanges();
+    };
+  }, [setEditMode]);
 
   const { data: areasData, isLoading: areasLoading, refetch: refetchAreas } = useQuery({
     queryKey: ["tables", "areas", branchId],
@@ -94,30 +142,31 @@ export default function TablesPage() {
   });
 
   const refreshTables = useCallback(() => {
+    if (useTablesStore.getState().isEditMode) return;
     refetchAreas();
     loadTables();
   }, [loadTables, refetchAreas]);
 
   const realtimeEvents = useMemo(
     () => ({
-      "table.updated": () => refreshTables(),
-      "table.status.changed": () => refreshTables(),
-      "table.layout.updated": () => refreshTables(),
-      "order.created": () => refreshTables(),
-      "order.updated": () => refreshTables(),
-      "order.sent_to_kitchen": () => refreshTables(),
-      "order.completed": () => refreshTables(),
-      "order.cancelled": () => refreshTables(),
+      "table.updated": () => { refreshTables(); refreshCommander(); },
+      "table.status.changed": () => { refreshTables(); refreshCommander(); },
+      "table.layout.updated": () => { refreshTables(); refreshCommander(); },
+      "order.created": () => { refreshTables(); refreshCommander(); },
+      "order.updated": () => { refreshTables(); refreshCommander(); },
+      "order.sent_to_kitchen": () => { refreshTables(); refreshCommander(); },
+      "order.completed": () => { refreshTables(); refreshCommander(); },
+      "order.cancelled": () => { refreshTables(); refreshCommander(); },
     }),
-    [refreshTables],
+    [refreshTables, refreshCommander],
   );
   const { status: realtimeStatus } = useRealtime(realtimeEvents);
 
   useEffect(() => {
-    if (areasData && areasData.length > 0) {
+    if (areasData) {
       setAreas(areasData);
-      if (!selectedAreaId) {
-        selectArea(areasData[0].id);
+      if (!areasData.some((area: { id: string }) => area.id === selectedAreaId)) {
+        selectArea(areasData[0]?.id ?? null);
       }
     }
   }, [areasData, setAreas, selectedAreaId, selectArea]);
@@ -149,12 +198,17 @@ export default function TablesPage() {
       return;
     }
 
+    commanderVersion.current += 1;
+    const version = commanderVersion.current;
+    createAttempt.current = null; additionAttempt.current = null;
+    setCurrentOrder(null);
     setOperationError(null);
     setDraftItems([]);
     setGuestCount("");
     setSelectedOperationalTable(table);
     selectTable(table);
     setCommanderOpen(true);
+    setMobileCommanderView(getOpenOrder(table) ? "ticket" : "products");
     loadProducts();
 
     const openOrder = getOpenOrder(table);
@@ -166,7 +220,10 @@ export default function TablesPage() {
     setIsSavingOrder(true);
     try {
       const order = await ordersApi.getOne(openOrder.id);
-      setCurrentOrder(order);
+      if (version !== commanderVersion.current) return;
+      if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+        setCurrentOrder(null); setSelectedOperationalTable({ ...table, status: 'AVAILABLE', orders: [] }); refreshTables();
+      } else setCurrentOrder(order);
     } catch {
       setOperationError("No se pudo cargar la comanda existente.");
       setCurrentOrder(openOrder);
@@ -176,12 +233,14 @@ export default function TablesPage() {
   };
 
   const createOrderForTable = async () => {
-    if (!selectedOperationalTable) return null;
+    if (!selectedOperationalTable || createBusy.current) return null;
+    createBusy.current = true;
     setIsSavingOrder(true);
     setOperationError(null);
     try {
       const order = await ordersApi.create({
         branchId,
+        requestId: (createAttempt.current ??= createPaymentAttemptId()),
         tableId: selectedOperationalTable.id,
         notes: guestCount ? `Personas: ${guestCount}` : undefined,
         items: [],
@@ -189,57 +248,77 @@ export default function TablesPage() {
       setCurrentOrder(order);
       refreshTables();
       return order as Order;
-    } catch {
-      setOperationError("No se pudo abrir la mesa. Verifica permisos y conexion.");
+    } catch (error) {
+      refreshTables();
+      setOperationError(getApiErrorMessage(error, "No se pudo abrir la mesa. Verifica permisos y conexion."));
       return null;
     } finally {
+      createBusy.current = false;
       setIsSavingOrder(false);
     }
   };
 
   const addDraftItem = (product: Product) => {
+    if (sendBusy.current || createBusy.current) return;
     setDraftItems((items) => {
-      const existing = items.find((item) => item.product.id === product.id);
+      const existing = items.find((item) => item.product.id === product.id && !item.notes?.trim());
       if (existing) {
         return items.map((item) =>
-          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+          item.id === existing.id ? { ...item, quantity: item.quantity + 1 } : item,
         );
       }
-      return [...items, { product, quantity: 1 }];
+      return [...items, { id: createPaymentAttemptId(), product, quantity: 1 }];
     });
   };
 
-  const updateDraftQuantity = (productId: string, quantity: number) => {
+  const updateDraftQuantity = (itemId: string, quantity: number) => {
+    if (sendBusy.current || createBusy.current) return;
     if (quantity <= 0) {
-      setDraftItems((items) => items.filter((item) => item.product.id !== productId));
+      setDraftItems((items) => items.filter((item) => item.id !== itemId));
       return;
     }
     setDraftItems((items) =>
-      items.map((item) => (item.product.id === productId ? { ...item, quantity } : item)),
+      items.map((item) => (item.id === itemId ? { ...item, quantity } : item)),
     );
   };
 
+  const splitDraftItem = (itemId: string) => {
+    if (sendBusy.current || createBusy.current) return;
+    setDraftItems(items => {
+      const item = items.find(row => row.id === itemId);
+      if (!item || item.quantity <= 1) return items;
+      return [...items.map(row => row.id === itemId ? { ...row, quantity: row.quantity - 1 } : row), { ...item, id: createPaymentAttemptId(), quantity: 1 }];
+    });
+  };
+
   const sendDraftItems = async () => {
-    if (isSavingOrder || draftItems.length === 0) return;
-    const order = currentOrder ?? (await createOrderForTable());
-    if (!order) return;
+    if (sendBusy.current || isSavingOrder || draftItems.length === 0) return;
+    sendBusy.current = true;
+    const order = currentOrder && activeOrderStatuses.includes(currentOrder.status) ? currentOrder : (await createOrderForTable());
+    if (!order) { sendBusy.current = false; return; }
 
     setIsSavingOrder(true);
     setOperationError(null);
     try {
-      await ordersApi.addItems(order.id, {
+      const addition = {
         items: draftItems.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
+          notes: item.notes,
         })),
-      });
+      };
+      const signature = JSON.stringify({ orderId: order.id, ...addition });
+      if (additionAttempt.current?.signature !== signature) additionAttempt.current = { signature, id: createPaymentAttemptId() };
+      await ordersApi.addItems(order.id, { ...addition, requestId: additionAttempt.current.id });
       const updated = await ordersApi.getOne(order.id);
       setCurrentOrder(updated);
       setDraftItems([]);
+      additionAttempt.current = null;
       refreshTables();
     } catch (err) {
       setOperationError(getApiErrorMessage(err, "No se pudieron agregar los productos al ticket."));
     } finally {
+      sendBusy.current = false;
       setIsSavingOrder(false);
     }
   };
@@ -249,6 +328,7 @@ export default function TablesPage() {
     const success = await saveLayout();
     if (success) {
       setEditMode(false);
+      refreshTables();
     }
   };
 
@@ -256,6 +336,7 @@ export default function TablesPage() {
     cancelChanges();
     setEditMode(false);
     selectTable(null);
+    refreshTables();
   };
 
   const handleTableUpdate = (id: string, updates: Partial<RestaurantTable>) => {
@@ -265,22 +346,7 @@ export default function TablesPage() {
 
   const handleTablesUpdate = (updatedTables: RestaurantTable[]) => {
     if (!canEditLayout || !tables) return;
-    updatedTables.forEach((table) => {
-      const original = tables.find((current) => current.id === table.id);
-      if (!original) return;
-
-      const changes = Object.keys(table).reduce((acc, key) => {
-        const tableKey = key as keyof RestaurantTable;
-        if (table[tableKey] !== original[tableKey]) {
-          acc[tableKey] = table[tableKey] as any;
-        }
-        return acc;
-      }, {} as Partial<RestaurantTable>);
-
-      if (Object.keys(changes).length > 0) {
-        updateTableLocal(table.id, changes);
-      }
-    });
+    replaceTablesLocal(updatedTables);
   };
 
   const stats = {
@@ -303,7 +369,7 @@ export default function TablesPage() {
 
   return (
     <div className="flex h-full flex-col space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <PageHeader
           title="Gestion de Mesas"
           description={
@@ -313,7 +379,7 @@ export default function TablesPage() {
           }
         />
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <RealtimeIndicator status={realtimeStatus} />
           {!isEditMode && (
             <>
@@ -322,7 +388,7 @@ export default function TablesPage() {
                 Actualizar
               </Button>
               {canEditLayout && (
-                <Button variant="outline" size="sm" onClick={() => setEditMode(true)}>
+                <Button variant="outline" size="sm" disabled={areasLoading || tablesLoading || !!layoutError || !selectedAreaId} onClick={() => setEditMode(true)}>
                   <Settings className="mr-2 h-4 w-4" />
                   Modo Diseno
                 </Button>
@@ -359,6 +425,7 @@ export default function TablesPage() {
         </div>
       )}
 
+      {layoutError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{layoutError}</p>}
       {areasLoading ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -377,10 +444,16 @@ export default function TablesPage() {
       ) : (
         <Tabs
           value={selectedAreaId || areas[0]?.id}
-          onValueChange={selectArea}
+          onValueChange={(id) => {
+            if (isSavingLayout) return;
+            if (isEditMode && useTablesStore.getState().hasUnsavedChanges &&
+                !window.confirm("Hay cambios sin guardar. ¿Descartarlos y cambiar de area?")) return;
+            if (isEditMode) handleCancel();
+            selectArea(id);
+          }}
           className="flex flex-1 flex-col"
         >
-          <TabsList className="w-full justify-start">
+          <TabsList className="w-full shrink-0 justify-start overflow-x-auto">
             {areas.map((area) => (
               <TabsTrigger
                 key={area.id}
@@ -408,6 +481,9 @@ export default function TablesPage() {
             >
               {isEditMode && canEditLayout ? (
                 <LayoutEditor
+                  key={area.id}
+                  areaId={area.id}
+                  isSaving={isSavingLayout}
                   tables={(tables || []).filter((table) => table.areaId === area.id)}
                   onTablesUpdate={handleTablesUpdate}
                   onSave={handleSave}
@@ -428,8 +504,8 @@ export default function TablesPage() {
         </Tabs>
       )}
 
-      <Dialog open={commanderOpen} onOpenChange={setCommanderOpen}>
-        <DialogContent className="max-h-[calc(100dvh-0.5rem)] overflow-y-auto sm:max-w-5xl lg:max-h-[92vh] lg:overflow-hidden">
+      <Dialog open={commanderOpen} onOpenChange={open => { if (isSavingOrder) return; commanderVersion.current += 1; setCommanderOpen(open); }}>
+        <DialogContent className="flex h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] flex-col overflow-hidden sm:max-w-5xl lg:h-[92dvh]">
           <DialogHeader>
             <DialogTitle>
               Mesa {selectedOperationalTable?.number}
@@ -437,9 +513,10 @@ export default function TablesPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid min-h-0 gap-4 lg:min-h-[620px] lg:grid-cols-[1fr_360px] lg:overflow-hidden">
-            <div className="flex min-h-0 flex-col rounded-lg border">
-              <div className="border-b p-3">
+          <OrderPaneSwitcher value={mobileCommanderView} onChange={setMobileCommanderView} count={countItems(displayOrder, draftItems)} />
+          <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-4 overflow-hidden lg:grid-cols-[1fr_360px]">
+            <div className={`${mobileCommanderView === "products" ? "flex" : "hidden"} min-h-0 flex-col overflow-y-auto rounded-lg border lg:flex`}>
+              <div className="shrink-0 border-b p-3">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -450,7 +527,7 @@ export default function TablesPage() {
                   />
                 </div>
               </div>
-              <div className="max-h-[45dvh] min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-none">
+              <div role="region" aria-label="Catalogo de productos" tabIndex={0} className="min-h-24 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain p-3 [scrollbar-gutter:stable]">
                 {productsLoading ? (
                   <div className="flex h-full items-center justify-center">
                     <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
@@ -486,8 +563,8 @@ export default function TablesPage() {
               </div>
             </div>
 
-            <div className="flex min-h-0 flex-col rounded-lg border bg-slate-50">
-              <div className="border-b bg-white p-4">
+            <div className={`${mobileCommanderView === "ticket" ? "flex" : "hidden"} min-h-0 flex-col overflow-y-auto rounded-lg border bg-slate-50 lg:flex`}>
+              <div className="shrink-0 border-b bg-white p-2 lg:p-4">
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="rounded-lg border p-2">
                     <Clock className="mx-auto h-4 w-4 text-muted-foreground" />
@@ -522,7 +599,7 @@ export default function TablesPage() {
                 )}
               </div>
 
-              <div className="max-h-[40dvh] min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-none">
+              <div role="region" aria-label="Productos de la comanda" tabIndex={0} className="min-h-24 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain p-3 [scrollbar-gutter:stable]">
                 {!displayOrder && draftItems.length === 0 ? (
                   <div className="rounded-lg border border-dashed bg-white p-5 text-center text-sm text-muted-foreground">
                     Mesa libre. Agrega productos o abre la mesa para crear la orden.
@@ -532,7 +609,7 @@ export default function TablesPage() {
                     {displayOrder?.items?.length ? (
                       <div className="rounded-lg border bg-white">
                         <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
-                          Enviados
+                          Productos del ticket
                         </div>
                         {displayOrder.items.map((item) => (
                           <div key={item.id} className="flex items-center gap-2 border-b px-3 py-2 last:border-0">
@@ -541,6 +618,7 @@ export default function TablesPage() {
                             </span>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-medium">{item.product.name}</p>
+                              {item.notes && <p className="whitespace-pre-wrap break-words text-xs text-blue-700">Preparación: {item.notes}</p>}
                               <p className="text-xs text-muted-foreground">
                                 {formatCurrency(Number(item.totalPrice))}
                               </p>
@@ -556,9 +634,11 @@ export default function TablesPage() {
                           Nuevos sin agregar
                         </div>
                         {draftItems.map((item) => (
-                          <div key={item.product.id} className="flex items-center gap-2 border-b px-3 py-2 last:border-0">
-                            <div className="min-w-0 flex-1">
+                          <div key={item.id} className="flex flex-wrap items-center gap-2 border-b px-3 py-2 last:border-0">
+                            <div className="w-full min-w-0">
                               <p className="truncate text-sm font-medium">{item.product.name}</p>
+                              <PreparationNotes name={item.product.name} quantity={item.quantity} value={item.notes} disabled={isSavingOrder} onChange={notes => setDraftItems(items => items.map(row => row.id === item.id ? { ...row, notes } : row))} />
+                              {item.quantity > 1 && <Button size="sm" variant="outline" className="mt-1" disabled={isSavingOrder} onClick={() => splitDraftItem(item.id)}>Separar 1</Button>}
                               <p className="text-xs text-muted-foreground">
                                 {formatCurrency(Number(item.product.price) * item.quantity)}
                               </p>
@@ -566,7 +646,7 @@ export default function TablesPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => updateDraftQuantity(item.product.id, item.quantity - 1)}
+                              onClick={() => updateDraftQuantity(item.id, item.quantity - 1)}
                             >
                               <Minus className="h-3 w-3" />
                             </Button>
@@ -574,7 +654,7 @@ export default function TablesPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => updateDraftQuantity(item.product.id, item.quantity + 1)}
+                              onClick={() => updateDraftQuantity(item.id, item.quantity + 1)}
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -582,7 +662,7 @@ export default function TablesPage() {
                               size="sm"
                               variant="outline"
                               className="text-red-600"
-                              onClick={() => updateDraftQuantity(item.product.id, 0)}
+                              onClick={() => updateDraftQuantity(item.id, 0)}
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>
@@ -600,7 +680,7 @@ export default function TablesPage() {
                 </div>
               )}
 
-              <div className="border-t bg-white p-4">
+              <div className="shrink-0 border-t bg-white p-3 lg:p-4">
                 <div className="mb-3 space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Orden actual</span>
@@ -615,6 +695,7 @@ export default function TablesPage() {
                     <span className="text-blue-600">{formatCurrency(orderTotal + draftTotal)}</span>
                   </div>
                 </div>
+                {displayOrder && <CashierTicketActions orderId={displayOrder.id} status={displayOrder.status} />}
                 <div className="grid gap-2">
                   {!displayOrder && (
                     <Button onClick={createOrderForTable} disabled={isSavingOrder}>
@@ -635,7 +716,7 @@ export default function TablesPage() {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setCommanderOpen(false)}>
               Cerrar
             </Button>

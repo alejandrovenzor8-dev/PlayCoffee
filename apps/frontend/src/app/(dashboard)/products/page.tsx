@@ -442,6 +442,7 @@ export default function ProductsPage() {
           <DialogHeader>
             <DialogTitle>{editingProduct ? "Editar producto" : "Nuevo producto"}</DialogTitle>
           </DialogHeader>
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label>Nombre</Label>

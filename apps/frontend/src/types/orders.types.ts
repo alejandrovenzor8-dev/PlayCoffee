@@ -33,6 +33,10 @@ export interface Order {
 }
 
 export interface OrderItem {
+  preparationStatus?: string;
+  preparationJobId?: string;
+  sentAt?: string;
+  printedAt?: string;
   id: string;
   orderId: string;
   productId: string;

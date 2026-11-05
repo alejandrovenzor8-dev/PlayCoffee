@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Printer, Send, X } from "lucide-react";
+import { Loader2, Send, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +20,9 @@ interface PrintableTicketProps {
   children: ReactNode;
   onQueue?: () => Promise<void>;
   isQueueing?: boolean;
+  controls?: ReactNode;
+  queueLabel?: string;
+  queueDisabled?: boolean;
 }
 
 export function PrintableTicket({
@@ -30,6 +33,7 @@ export function PrintableTicket({
   children,
   onQueue,
   isQueueing = false,
+  controls, queueLabel, queueDisabled = false,
 }: PrintableTicketProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -42,23 +46,20 @@ export function PrintableTicket({
             {children}
           </div>
         </div>
+        {controls && <div className="print:hidden">{controls}</div>}
         <DialogFooter className="print:hidden">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             <X className="mr-2 h-4 w-4" />
             Cerrar
           </Button>
-          <Button onClick={() => window.print()}>
-            <Printer className="mr-2 h-4 w-4" />
-            Imprimir
-          </Button>
           {onQueue && (
-            <Button onClick={() => void onQueue()} disabled={isQueueing}>
+            <Button onClick={() => void onQueue()} disabled={isQueueing || queueDisabled}>
               {isQueueing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Send className="mr-2 h-4 w-4" />
               )}
-              Enviar a impresora
+              {queueLabel ?? (document?.type === "CUSTOMER" ? "Enviar a caja" : "Enviar comanda nueva")}
             </Button>
           )}
         </DialogFooter>

@@ -1,3 +1,4 @@
+import type { CashierPrintPolicy, PrintTicketDocument } from '@/types/print.types';
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/store/auth.store";
 
@@ -211,6 +212,8 @@ export const ordersApi = {
     api.post(`/orders/${id}/items`, data).then((r) => r.data.data),
   updateStatus: (id: string, data: { status: string; notes?: string }) =>
     api.patch(`/orders/${id}`, data).then((r) => r.data.data),
+  correctItem: (id: string, itemId: string, data: { quantity: number; notes?: string; reason: string }) =>
+    api.patch(`/orders/${id}/items/${itemId}`, data).then(r => r.data.data),
   cancel: (id: string) => api.delete(`/orders/${id}`),
   getDailySummary: (branchId: string, date?: string) =>
     api
@@ -219,6 +222,7 @@ export const ordersApi = {
 };
 
 export const tablesApi = {
+  saveLayout: (data: unknown) => api.post("/tables/layout", data).then((r) => r.data.data),
   getAll: (branchId?: string) =>
     api.get("/tables", { params: { branchId } }).then((r) => r.data.data),
   getByArea: (areaId: string) =>
@@ -266,8 +270,25 @@ export const paymentsApi = {
 };
 
 export const printApi = {
+  cashierPolicy: (): Promise<CashierPrintPolicy> => api.get('/print/cashier-policy').then(r => r.data.data),
+  prebill: (id: string): Promise<PrintTicketDocument> => api.get(`/print/order/${id}/prebill`).then(r => r.data.data),
+  queuePrebill: (id: string, requestId: string) => api.post(`/print/order/${id}/prebill`, { requestId }).then(r => r.data.data),
+  businessReceipt: (id: string): Promise<{ id: string; status: string; lastError: string | null; document: PrintTicketDocument }> => api.get(`/print/order/${id}/business-receipt`).then(r => r.data.data),
+  printBusinessReceipt: (id: string, requestId: string, reason: string) => api.post(`/print/order/${id}/business-receipt/print`, { requestId, reason }).then(r => r.data.data),
+  batches: (orderId: string): Promise<Array<{ id: string; type: string; status: string; lastError?: string }>> =>
+    api.get(`/print/order/${orderId}/batches`).then(r => r.data.data),
+  reprint: (id: string, reason: string) => api.post(`/print/batches/${id}/reprint`, { reason }).then(r => r.data.data),
+  discover: (): Promise<Array<{ name: string; target: string; connection: "windows" | "tcp" }>> =>
+    api.get("/print/printers").then((r) => r.data.data),
+  test: (target: string, width: "58mm" | "80mm", type: "CUSTOMER" | "KITCHEN" | "BAR"): Promise<{ id: string; status: string }> =>
+    api.post("/print/test", { target, width, type }).then((r) => r.data.data),
+  jobStatus: (id: string): Promise<{ id: string; status: string; lastError: string | null }> =>
+    api.get(`/print/jobs/${id}`).then((r) => r.data.data),
   getConfig: () => api.get("/print/config").then((r) => r.data.data),
   updateConfig: (data: {
+    cashierMode?: 'BUSINESS_ONLY' | 'CUSTOMER_AND_BUSINESS';
+    confirmClose?: boolean;
+    allowReprint?: boolean;
     cashierPrinter: string;
     kitchenPrinter: string;
     barPrinter: string;
@@ -286,14 +307,29 @@ export const printApi = {
     api.post(`/print/order/${orderId}/queue`, { type }).then((r) => r.data.data),
 };
 
+export interface CashClosingReminder {
+  shiftId: string;
+  openedAt: string;
+  timezone: string;
+  fromPreviousDay: boolean;
+}
+
+export const CASH_SHIFT_CHANGED = "playcoffee:cash-shift-changed";
+function notifyCashShiftChanged<T>(data: T): T {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CASH_SHIFT_CHANGED));
+  return data;
+}
+
 export const cashApi = {
+  getClosingReminder: (): Promise<CashClosingReminder | null> =>
+    api.get("/cash/closing-reminder").then((r) => r.data.data),
   getCurrent: () => api.get("/cash/current").then((r) => r.data.data),
   open: (data: { openingBalance: number; notes?: string }) =>
-    api.post("/cash/open", data).then((r) => r.data.data),
+    api.post("/cash/open", data).then((r) => notifyCashShiftChanged(r.data.data)),
   addMovement: (data: { type: "IN" | "OUT"; amount: number; reason: string }) =>
     api.post("/cash/movements", data).then((r) => r.data.data),
   close: (data: { closingBalance: number; notes?: string }) =>
-    api.patch("/cash/close", data).then((r) => r.data.data),
+    api.patch("/cash/close", data).then((r) => notifyCashShiftChanged(r.data.data)),
   history: (params?: { from?: string; to?: string }) =>
     api.get("/cash/history", { params }).then((r) => r.data.data),
   detail: (id: string) => api.get(`/cash/${id}`).then((r) => r.data.data),

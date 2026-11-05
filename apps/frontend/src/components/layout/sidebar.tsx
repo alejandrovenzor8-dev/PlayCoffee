@@ -7,6 +7,7 @@ import { getAllowedNavigationItems } from "@/lib/permissions";
 import { useAuthStore } from "@/store/auth.store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { LogoutButton } from "@/components/layout/logout-button";
 import {
   Baby,
   BarChart3,
@@ -15,7 +16,6 @@ import {
   ClipboardList,
   Coffee,
   LayoutDashboard,
-  LogOut,
   Package,
   Settings,
   ShoppingCart,
@@ -42,7 +42,7 @@ const navIcons = {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { user, clearAuth } = useAuthStore();
+  const { user } = useAuthStore();
   const navItems = getAllowedNavigationItems(user);
 
   const initials = user
@@ -120,13 +120,7 @@ export function Sidebar() {
               {user?.role ?? "-"}
             </Badge>
           </div>
-          <button
-            onClick={clearAuth}
-            className="rounded p-1.5 opacity-50 transition-opacity hover:bg-white/10 hover:opacity-100"
-            title="Cerrar sesion"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
+          <LogoutButton />
         </div>
       </div>
     </aside>

@@ -105,6 +105,7 @@ enum PreparationStation {
 }
 
 enum PrintJobStatus {
+  HELD
   PENDING
   PROCESSING
   PRINTED
@@ -400,6 +401,7 @@ model Order {
   branchId              String
   tableId               String?
   userId                String
+  requestId             String?     @unique
   orderNumber           String      @unique
   status                OrderStatus @default(PENDING)
   notes                 String?
@@ -439,6 +441,10 @@ model OrderItem {
   totalPrice Decimal     @db.Decimal(10, 2)
   notes      String?
   status     OrderStatus @default(PENDING)
+  preparationStatus String @default("PENDING")
+  preparationJobId String?
+  sentAt DateTime?
+  printedAt DateTime?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
 
@@ -466,9 +472,10 @@ model OrderItemModifier {
 }
 
 model PrintJob {
+  dedupKey String? @unique
   id            String         @id @default(uuid())
   branchId      String
-  orderId       String
+  orderId       String?
   type          PrintJobType
   status        PrintJobStatus @default(PENDING)
   printerTarget String
@@ -484,7 +491,7 @@ model PrintJob {
   updatedAt     DateTime       @updatedAt
 
   branch Branch @relation(fields: [branchId], references: [id])
-  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order  Order? @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([status, nextAttemptAt, createdAt])
   @@index([branchId, createdAt])
@@ -625,6 +632,7 @@ model InventoryMovement {
 // ─────────────────────────────────────────────
 
 model ChildAccess {
+  requestId String? @unique
   id                    String            @id @default(uuid())
   branchId              String
   orderId               String?
@@ -818,4 +826,13 @@ model AuditLog {
   @@index([branchId, createdAt])
   @@index([entity, entityId])
   @@map("audit_logs")
+}
+
+// Idempotent additions from devices, retained with order history.
+model OrderSubmission {
+  id String @id
+  orderId String
+  branchId String
+  createdAt DateTime @default(now())
+  @@map("order_submissions")
 }

@@ -1,13 +1,21 @@
-import { IsString, IsNumber, IsOptional, IsEnum, Min } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsEnum,
+  Min,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TableStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreateTableDto {
-  @ApiProperty() @IsString() areaId: string;
-  @ApiProperty() @IsString() number: string;
+  @ApiProperty() @IsString() @IsNotEmpty() areaId: string;
+  @ApiProperty() @IsString() @IsNotEmpty() number: string;
   @ApiPropertyOptional()
-  @IsNumber()
+  @IsInt()
   @Min(1)
   @IsOptional()
   @Type(() => Number)

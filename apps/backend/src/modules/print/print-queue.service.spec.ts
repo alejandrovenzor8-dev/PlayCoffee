@@ -9,7 +9,12 @@ describe('PrintService queue', () => {
     findUnique: jest.fn(),
     update: jest.fn(),
   };
-  const service = new PrintService({ printJob } as never);
+  const orderItem = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+  const db = { printJob, orderItem };
+  const service = new PrintService({
+    ...db,
+    $transaction: (callback: (tx: typeof db) => unknown) => callback(db),
+  } as never);
 
   beforeEach(() => jest.clearAllMocks());
 

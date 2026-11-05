@@ -1,5 +1,6 @@
 import {
   IsString,
+  IsBoolean,
   IsEnum,
   IsNumber,
   IsOptional,
@@ -12,6 +13,7 @@ import { PaymentMethod } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreatePaymentDto {
+  @IsBoolean() @IsOptional() closeConfirmed?: boolean;
   @ApiProperty() @IsString() orderId: string;
   @ApiProperty({ enum: PaymentMethod })
   @IsEnum(PaymentMethod)

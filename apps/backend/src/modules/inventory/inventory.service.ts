@@ -134,6 +134,7 @@ export class InventoryService {
         where: { id: orderId, branchId, deletedAt: null },
         include: {
           items: {
+            where: { status: { not: OrderStatus.CANCELLED } },
             include: {
               product: {
                 include: {
@@ -185,6 +186,7 @@ export class InventoryService {
         where: { id: orderId, branchId, deletedAt: null },
         include: {
           items: {
+            where: { status: { not: OrderStatus.CANCELLED } },
             include: {
               product: {
                 include: {

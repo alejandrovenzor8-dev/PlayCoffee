@@ -3,6 +3,7 @@ import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { MobileNavigation } from "@/components/layout/mobile-navigation";
+import { CashClosingReminder } from "@/components/layout/cash-closing-reminder";
 
 export const metadata: Metadata = {
   title: "PlayCoffee OS",
@@ -20,7 +21,8 @@ export default function DashboardLayout({
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <Header />
-          <main className="flex-1 overflow-y-auto px-3 py-4 pb-24 sm:px-5 sm:py-5 lg:p-6">
+          <CashClosingReminder />
+          <main className="flex-1 overflow-y-auto px-3 py-4 pb-24 sm:px-5 sm:pt-5 lg:p-6">
             {children}
           </main>
         </div>

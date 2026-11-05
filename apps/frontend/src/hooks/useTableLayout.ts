@@ -1,178 +1,88 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { tablesApi } from "@/lib/api";
+import { useState, useCallback, useRef } from "react";
+import { getApiErrorMessage, tablesApi } from "@/lib/api";
 import { useTablesStore } from "@/store/tables.store";
 import type { RestaurantTable } from "@/types/orders.types";
-import { toast } from "@/components/ui/use-toast";
 
 export function useTableLayout(areaId: string) {
-  const {
-    tables,
-    setTables,
-    updateTable,
-    setLoading,
-    setHasUnsavedChanges,
-    resetChanges,
-  } = useTablesStore();
+  const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const original = useRef<RestaurantTable[]>([]);
+  const requestVersion = useRef(0);
+  const loadedArea = useRef("");
+  const saving = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const setHasUnsavedChanges = useTablesStore((state) => state.setHasUnsavedChanges);
 
-  const [localTables, setLocalTables] = useState<RestaurantTable[]>([]);
-
-  // Cargar mesas del área
   const loadTables = useCallback(async () => {
-    setLoading(true);
-    try {
-      const tables = await tablesApi.getByArea(areaId);
-      setTables(tables);
-      setLocalTables(tables);
-    } catch (error) {
-      console.error("Error loading tables:", error);
-      toast({
-        title: "Error",
-        description: "No se pudieron cargar las mesas",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
+    const version = ++requestVersion.current;
+    if (loadedArea.current !== areaId) {
+      loadedArea.current = areaId;
+      setTables([]);
+      original.current = [];
     }
-  }, [areaId, setTables, setLoading]);
-
-  // Actualizar mesa localmente (sin guardar)
-  const updateTableLocal = useCallback(
-    (tableId: string, updates: Partial<RestaurantTable>) => {
-      setLocalTables((prev) =>
-        prev.map((t) => (t.id === tableId ? { ...t, ...updates } : t))
-      );
-      setHasUnsavedChanges(true);
-    },
-    [setHasUnsavedChanges]
-  );
-
-  // Guardar todos los cambios
-  const saveLayout = useCallback(async () => {
-    setLoading(true);
+    if (!areaId) { setTables([]); original.current = []; return; }
+    setIsLoading(true);
     try {
-      // Guardar cada mesa modificada
-      const updates = localTables.map(async (table) => {
-        const { id, number, capacity, posX, posY, width, height, rotation, shape, color, status } = table;
-        
-        return tablesApi.update(id, {
-          number,
-          capacity,
-          posX,
-          posY,
-          width,
-          height,
-          rotation,
-          shape,
-          color,
-          status,
-        });
+      const next = await tablesApi.getByArea(areaId);
+      if (version !== requestVersion.current || useTablesStore.getState().hasUnsavedChanges) return;
+      original.current = next;
+      setTables(next);
+      setError(null);
+    } catch (err) {
+      if (version === requestVersion.current) setError(getApiErrorMessage(err, "No se pudieron cargar las mesas."));
+    } finally {
+      if (version === requestVersion.current) setIsLoading(false);
+    }
+  }, [areaId]);
+
+  const replaceTablesLocal = useCallback((next: RestaurantTable[]) => {
+    setTables(next);
+    setHasUnsavedChanges(true);
+    setError(null);
+  }, [setHasUnsavedChanges]);
+
+  const updateTableLocal = useCallback((id: string, updates: Partial<RestaurantTable>) => {
+    setTables((previous) => previous.map((table) => table.id === id ? { ...table, ...updates } : table));
+    setHasUnsavedChanges(true);
+  }, [setHasUnsavedChanges]);
+
+  const saveLayout = useCallback(async () => {
+    if (saving.current) return false;
+    saving.current = true;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const next: RestaurantTable[] = await tablesApi.saveLayout({
+        areaId,
+        tables: tables.map((table) => ({
+          ...(table.id.startsWith("temp-") ? {} : { id: table.id }),
+          areaId, number: table.number, capacity: table.capacity,
+          posX: table.posX, posY: table.posY, width: table.width, height: table.height,
+          rotation: table.rotation, shape: table.shape, color: table.color ?? "",
+        })),
+        deletedIds: original.current.filter((table) => !tables.some((entry) => entry.id === table.id)).map((table) => table.id),
       });
-
-      await Promise.all(updates);
-
-      setTables(localTables);
-      resetChanges();
-
-      toast({
-        title: "¡Guardado!",
-        description: "El layout de mesas se actualizó correctamente",
-      });
-
+      original.current = next;
+      setTables(next);
+      setHasUnsavedChanges(false);
       return true;
-    } catch (error) {
-      console.error("Error saving layout:", error);
-      toast({
-        title: "Error",
-        description: "No se pudo guardar el layout",
-        variant: "destructive",
-      });
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No se pudo guardar el plano. Tus cambios siguen disponibles para reintentar."));
       return false;
     } finally {
-      setLoading(false);
+      saving.current = false;
+      setIsSaving(false);
     }
-  }, [localTables, setTables, setLoading, resetChanges]);
+  }, [areaId, tables, setHasUnsavedChanges]);
 
-  // Cancelar cambios
   const cancelChanges = useCallback(() => {
-    setLocalTables(tables || []);
-    resetChanges();
-  }, [tables, resetChanges]);
+    setTables(original.current);
+    setHasUnsavedChanges(false);
+    setError(null);
+  }, [setHasUnsavedChanges]);
 
-  // Crear nueva mesa
-  const createTable = useCallback(
-    async (tableData: Partial<RestaurantTable>) => {
-      setLoading(true);
-      try {
-        const newTable = await tablesApi.create({
-          areaId,
-          ...tableData,
-        } as any);
-
-        setLocalTables((prev) => [...prev, newTable]);
-        setTables([...(tables || []), newTable]);
-
-        toast({
-          title: "Mesa creada",
-          description: `Mesa ${newTable.number} creada exitosamente`,
-        });
-
-        return newTable;
-      } catch (error) {
-        console.error("Error creating table:", error);
-        toast({
-          title: "Error",
-          description: "No se pudo crear la mesa",
-          variant: "destructive",
-        });
-        return null;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [areaId, tables, setTables, setLoading]
-  );
-
-  // Eliminar mesa
-  const deleteTable = useCallback(
-    async (tableId: string) => {
-      setLoading(true);
-      try {
-        await tablesApi.delete(tableId);
-
-        const updated = localTables.filter((t) => t.id !== tableId);
-        setLocalTables(updated);
-        setTables((tables || []).filter((t) => t.id !== tableId));
-
-        toast({
-          title: "Mesa eliminada",
-          description: "La mesa se eliminó correctamente",
-        });
-
-        return true;
-      } catch (error) {
-        console.error("Error deleting table:", error);
-        toast({
-          title: "Error",
-          description: "No se pudo eliminar la mesa",
-          variant: "destructive",
-        });
-        return false;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [localTables, tables, setTables, setLoading]
-  );
-
-  return {
-    tables: localTables,
-    loadTables,
-    updateTableLocal,
-    saveLayout,
-    cancelChanges,
-    createTable,
-    deleteTable,
-  };
+  return { tables, loadTables, updateTableLocal, replaceTablesLocal, saveLayout, cancelChanges, isSaving, isLoading, error };
 }

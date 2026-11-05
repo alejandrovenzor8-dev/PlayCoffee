@@ -1,4 +1,4 @@
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
 import type { PrintTicketDocument } from "@/types/print.types";
 
 const paymentLabels: Record<string, string> = {
@@ -10,11 +10,15 @@ const paymentLabels: Record<string, string> = {
 };
 
 export function CustomerReceipt({ document }: { document: PrintTicketDocument }) {
+  const localTime = (value: string) => new Date(value).toLocaleString('es-MX', { timeZone: document.order.timezone ?? 'America/Mexico_City' });
   return (
     <article className="ticket-body">
       <header className="ticket-center ticket-section">
         <h2 className="ticket-business">{document.config.businessName}</h2>
         <p>{document.config.branchName}</p>
+        <strong>{document.cashierDocument?.kind === 'PREBILL' ? 'PRECUENTA — NO ES COMPROBANTE DE PAGO' : 'COPIA NEGOCIO'}</strong>
+        {document.cashierDocument && <><p className="break-all">Comprobante: {document.cashierDocument.receiptId}</p><p>{localTime(document.cashierDocument.issuedAt)}</p>{document.cashierDocument.reprint && <p>REIMPRESION AUTORIZADA</p>}</>}
+        {document.cashierDocument?.kind === 'BUSINESS' && <p>Documento no fiscal. No es CFDI.</p>}
         {document.config.address && <p>{document.config.address}</p>}
         {document.config.phone && <p>Tel. {document.config.phone}</p>}
       </header>
@@ -26,8 +30,10 @@ export function CustomerReceipt({ document }: { document: PrintTicketDocument })
         </div>
         <div className="ticket-row">
           <span>Fecha</span>
-          <span>{formatDate(document.order.createdAt)}</span>
+          <span>{localTime(document.order.createdAt)}</span>
         </div>
+        <p className="break-all">ID orden: {document.order.id}</p>
+        <div className="ticket-row"><span>Mesero</span><span>{document.order.waiter ?? '-'}</span></div>
         {document.order.cashier && (
           <div className="ticket-row">
             <span>Cajero</span>
@@ -51,6 +57,7 @@ export function CustomerReceipt({ document }: { document: PrintTicketDocument })
               </span>
               <strong>{formatCurrency(item.totalPrice ?? 0)}</strong>
             </div>
+            <p className="ticket-muted">Precio unitario: {formatCurrency(item.unitPrice ?? 0)}</p>
             {item.modifiers.map((modifier) => (
               <p key={`${item.id}-${modifier.name}`} className="ticket-muted">
                 + {modifier.quantity} {modifier.name}
@@ -86,6 +93,8 @@ export function CustomerReceipt({ document }: { document: PrintTicketDocument })
               <span>{formatCurrency(document.totals.tipAmount)}</span>
             </div>
           )}
+          <div className="ticket-row"><span>Pagado</span><span>{formatCurrency(document.totals.paid)}</span></div>
+          <div className="ticket-row"><span>Saldo pendiente</span><span>{formatCurrency(Math.max(0, document.totals.total - document.totals.paid))}</span></div>
           <div className="ticket-row ticket-total">
             <span>Total</span>
             <span>{formatCurrency(document.totals.total)}</span>

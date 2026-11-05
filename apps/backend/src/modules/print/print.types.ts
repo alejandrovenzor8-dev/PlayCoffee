@@ -5,6 +5,20 @@ export type PrintTicketType = 'CUSTOMER' | 'KITCHEN' | 'BAR';
 export type PrintTicketDocument = {
   type: PrintTicketType;
   width: '58mm' | '80mm';
+  dispatch?: {
+    batchId?: string;
+    sentAt?: string;
+    kind?: 'NEW' | 'REPRINT' | 'CANCELLATION';
+    originalBatchId?: string;
+    reason?: string;
+  };
+  cashierDocument?: {
+    kind: 'PREBILL' | 'BUSINESS';
+    receiptId: string;
+    issuedAt: string;
+    reprint?: boolean;
+    sourceJobId?: string;
+  };
   config: {
     businessName: string;
     branchName: string;
@@ -20,6 +34,8 @@ export type PrintTicketDocument = {
     orderNumber: string;
     status: string;
     createdAt: Date;
+    timezone?: string;
+    area?: string | null;
     table: string | null;
     cashier: string | null;
     waiter: string | null;

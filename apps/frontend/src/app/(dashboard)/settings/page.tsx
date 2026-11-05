@@ -13,12 +13,56 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Building2, Coffee, MapPin, Clock, Bell, Shield, Save, Loader2, Printer } from "lucide-react";
-import { paymentsApi, printApi } from "@/lib/api";
+import { api, getApiErrorMessage, paymentsApi, printApi } from "@/lib/api";
+import { useAuthStore } from "@/store/auth.store";
 
 export default function SettingsPage() {
   const router = useRouter();
+  const branchId = useAuthStore((state) => state.user?.branchId);
+  const [branchLoaded, setBranchLoaded] = useState(false);
+  const [branchMessage, setBranchMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [printMessage, setPrintMessage] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState(false);
+  const [printers, setPrinters] = useState<Array<{ name: string; target: string }>>([]);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testJobs, setTestJobs] = useState<Record<string, { id: string; status: string; lastError?: string | null }>>({});
+  const discover = async () => {
+    setDetecting(true);
+    try {
+      const found = await printApi.discover();
+      setPrinters(found);
+      setPrintMessage(found.length ? "Selecciona una impresora detectada para cada estación y guarda los cambios." : "No se encontraron impresoras instaladas en el servidor. Instálalas en Windows o introduce su IP manualmente.");
+    } catch (error) { setPrintMessage(getApiErrorMessage(error, "No se pudieron detectar las impresoras.")); }
+    finally { setDetecting(false); }
+  };
+  const testPrinter = async (key: "cashierPrinter" | "kitchenPrinter" | "barPrinter") => {
+    setTesting(key);
+    try {
+      const job = await printApi.test(printSettings[key], printSettings.width, key === "cashierPrinter" ? "CUSTOMER" : key === "kitchenPrinter" ? "KITCHEN" : "BAR");
+      setTestJobs((jobs) => ({ ...jobs, [key]: job }));
+    } catch (error) { setPrintMessage(getApiErrorMessage(error, "No se pudo enviar la prueba.")); }
+    finally { setTesting(null); }
+  };
+  useEffect(() => {
+    const pending = Object.entries(testJobs).filter(([, job]) => ["PENDING", "PROCESSING"].includes(job.status));
+    if (!pending.length) return;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      for (const [key, job] of pending) {
+        try {
+          const result = await printApi.jobStatus(job.id);
+          if (active) setTestJobs((jobs) => ({ ...jobs, [key]: result }));
+        } catch (error) {
+          if (active) {
+            setPrintMessage(getApiErrorMessage(error, "No se pudo consultar la prueba; puede seguir en cola."));
+            setTestJobs((jobs) => ({ ...jobs }));
+          }
+        }
+      }
+    }, 3000);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [testJobs]);
   const [printSettings, setPrintSettings] = useState({
     cashierPrinter: "",
     kitchenPrinter: "",
@@ -27,6 +71,9 @@ export default function SettingsPage() {
     autoKitchen: true,
     autoBar: true,
     autoCustomer: true,
+    cashierMode: "BUSINESS_ONLY" as "BUSINESS_ONLY" | "CUSTOMER_AND_BUSINESS",
+    confirmClose: false,
+    allowReprint: true,
   });
 
   useEffect(() => {
@@ -50,14 +97,40 @@ export default function SettingsPage() {
   };
 
   const [branchSettings, setBranchSettings] = useState({
-    name: "Play Coffee - Sucursal Centro",
-    address: "Av. Principal 123, Col. Centro",
-    phone: "555-0000",
-    email: "centro@playcoffee.mx",
+    name: "",
+    address: "",
+    phone: "",
+    email: "",
     currency: "MXN",
     timezone: "America/Mexico_City",
     taxRate: "0",
   });
+
+  useEffect(() => {
+    let active = true;
+    if (!branchId) return;
+    api.get(`/branches/${branchId}`).then(({ data }) => {
+      if (!active) return;
+      const branch = data.data;
+      setBranchSettings({ name: branch.name, address: branch.address ?? "", phone: branch.phone ?? "", email: branch.email ?? "", currency: branch.currency, timezone: branch.timezone, taxRate: "0" });
+      setBranchLoaded(true);
+    }).catch((error) => { if (active) setBranchMessage(getApiErrorMessage(error, "No se pudo cargar la sucursal.")); });
+    return () => { active = false; };
+  }, [branchId]);
+
+  const handleBranchSave = async () => {
+    if (!branchId || !branchLoaded) return;
+    setSaving(true);
+    setBranchMessage("");
+    try {
+      await api.patch(`/branches/${branchId}`, {
+        name: branchSettings.name.trim(), address: branchSettings.address.trim(), phone: branchSettings.phone.trim(),
+        email: branchSettings.email.trim() || null, currency: branchSettings.currency, timezone: branchSettings.timezone,
+      });
+      setBranchMessage("Información de sucursal guardada.");
+    } catch (error) { setBranchMessage(getApiErrorMessage(error, "No se pudo guardar la sucursal.")); }
+    finally { setSaving(false); }
+  };
 
   const [posSettings, setPosSettings] = useState({
     requireTableForOrder: true,
@@ -146,8 +219,9 @@ export default function SettingsPage() {
 
       {/* Branch Tab */}
       <TabsContent value="branch" className="space-y-6">
+        {branchMessage && <p role="status" className="rounded-lg border p-3 text-sm">{branchMessage}</p>}
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleBranchSave} disabled={saving || !branchLoaded || !branchSettings.name.trim()}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
             Guardar cambios
           </Button>
@@ -207,9 +281,8 @@ export default function SettingsPage() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>Tasa de IVA (%)</Label>
-                <Input type="number" min={0} max={100} step={0.1} value={branchSettings.taxRate}
-                  onChange={(e) => setBranchSettings((s) => ({ ...s, taxRate: e.target.value }))} />
+                <Label>Impuestos</Label>
+                <p className="text-sm text-muted-foreground">El IVA se configura por producto en el catálogo.</p>
               </div>
             </div>
           </CardContent>
@@ -217,7 +290,8 @@ export default function SettingsPage() {
       </TabsContent>
 
       <TabsContent value="printing" className="space-y-6">
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" onClick={discover} disabled={detecting}>{detecting ? "Detectando…" : "Detectar impresoras"}</Button>
           <Button onClick={handlePrintSave} disabled={saving}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Guardar impresoras
@@ -227,7 +301,7 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Impresión local ESC/POS</CardTitle>
-            <CardDescription>Asigna una impresora a cada estación. Las impresoras de red normalmente usan el puerto 9100.</CardDescription>
+            <CardDescription>Detecta las impresoras instaladas en el servidor Windows, incluidas las de red registradas allí. Las impresoras IP no instaladas se pueden agregar manualmente. La prueba usa el destino elegido sin necesidad de guardarlo.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {[
@@ -237,11 +311,27 @@ export default function SettingsPage() {
             ].map(([key, label, placeholder]) => (
               <div className="space-y-1.5" key={key}>
                 <Label>{label}</Label>
+                {printers.length > 0 && <Select value={printers.some((p) => p.target === printSettings[key as "cashierPrinter" | "kitchenPrinter" | "barPrinter"]) ? printSettings[key as "cashierPrinter" | "kitchenPrinter" | "barPrinter"] : ""}
+                  onValueChange={(target) => setPrintSettings((settings) => ({ ...settings, [key]: target }))}>
+                  <SelectTrigger><SelectValue placeholder="Elegir impresora detectada" /></SelectTrigger>
+                  <SelectContent>{printers.map((printer) => <SelectItem key={`${printer.name}-${printer.target}`} value={printer.target}>{printer.name}</SelectItem>)}</SelectContent>
+                </Select>}
+                <Select value={printSettings[key as "cashierPrinter" | "kitchenPrinter" | "barPrinter"].startsWith("windows:///") ? "windows" : "tcp"}
+                  onValueChange={(type) => setPrintSettings((settings) => ({ ...settings, [key]: type === "windows" ? "windows:///" : "tcp://" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="windows">Local / USB instalada en el servidor Windows</SelectItem><SelectItem value="tcp">Impresora por IP (red)</SelectItem></SelectContent>
+                </Select>
                 <Input
                   value={printSettings[key as "cashierPrinter" | "kitchenPrinter" | "barPrinter"]}
                   placeholder={placeholder}
                   onChange={(event) => setPrintSettings((settings) => ({ ...settings, [key]: event.target.value }))}
                 />
+                <p className="text-xs text-muted-foreground">Red: tcp://192.168.1.61:9100. Local: windows:///Nombre exacto de la impresora en el servidor. Requiere impresora compatible con ESC/POS.</p>
+                <Button variant="outline" size="sm" onClick={() => testPrinter(key as "cashierPrinter" | "kitchenPrinter" | "barPrinter")}
+                  disabled={testing !== null || !printSettings[key as "cashierPrinter" | "kitchenPrinter" | "barPrinter"] || ["PENDING", "PROCESSING"].includes(testJobs[key]?.status)}>
+                  {testing === key ? "Enviando…" : `Probar impresión de ${label.toLowerCase()}`}
+                </Button>
+                {testJobs[key] && <p role="status" className="text-sm">{testJobs[key].status === "PRINTED" ? "Prueba enviada a la impresora. Confirma que salió el papel." : testJobs[key].status === "FAILED" ? `Falló la prueba: ${testJobs[key].lastError ?? "Revisa la impresora."}` : "Prueba en cola o procesándose. Mantén encendidos el servidor, el agente de impresión y la impresora."}</p>}
               </div>
             ))}
             <div className="space-y-1.5">
@@ -254,12 +344,18 @@ export default function SettingsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-3 border-t pt-4">
+              <Label>Tickets en caja</Label>
+              <Select value={printSettings.cashierMode} onValueChange={(cashierMode: 'BUSINESS_ONLY' | 'CUSTOMER_AND_BUSINESS') => setPrintSettings(s => ({ ...s, cashierMode }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BUSINESS_ONLY">Solo negocio</SelectItem><SelectItem value="CUSTOMER_AND_BUSINESS">Cliente + negocio</SelectItem></SelectContent></Select>
+              <div className="flex justify-between"><Label>Confirmar cierre al liquidar</Label><Switch checked={printSettings.confirmClose} onCheckedChange={confirmClose => setPrintSettings(s => ({ ...s, confirmClose }))} /></div>
+              <div className="flex justify-between"><Label>Permitir reimpresion autorizada</Label><Switch checked={printSettings.allowReprint} onCheckedChange={allowReprint => setPrintSettings(s => ({ ...s, allowReprint }))} /></div>
+            </div>
             <div className="space-y-4 border-t pt-4">
               <p className="text-sm font-medium">Impresión automática</p>
               {[
                 ["autoKitchen", "Cocina", "Al enviar productos nuevos preparados en cocina"],
                 ["autoBar", "Barra", "Al enviar productos nuevos preparados en barra"],
-                ["autoCustomer", "Ticket de cliente", "Cuando la orden queda completamente pagada"],
+                ["autoCustomer", "Comprobante del negocio", "Copia negocio al liquidar; nunca imprime una precuenta automaticamente"],
               ].map(([key, label, description]) => (
                 <div className="flex items-start justify-between gap-4" key={key}>
                   <div>

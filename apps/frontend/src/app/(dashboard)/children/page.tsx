@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { childAccessApi, ordersApi, getApiErrorMessage } from "@/lib/api";
+import { childAccessApi, ordersApi, tablesApi, getApiErrorMessage } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -39,6 +39,9 @@ import {
   ShieldCheck,
   UserPlus,
 } from "lucide-react";
+
+import type { RestaurantTable } from "@/types/orders.types";
+import { createPaymentAttemptId } from "@/lib/payment-id";
 
 type AccessMode = "HOURLY";
 type AccessStatus = "ACTIVE" | "WARNING" | "GRACE" | "OVERTIME" | "COMPLETED";
@@ -176,6 +179,9 @@ export default function ChildrenPage() {
   const branchId = getActiveBranchId(user);
   const canManage = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" || user?.role === "CASHIER";
   const [active, setActive] = useState<ChildRecord[]>([]);
+  const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const checkinAttempt = useRef<string | null>(null);
+  const checkinBusy = useRef(false);
   const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -192,8 +198,9 @@ export default function ChildrenPage() {
     guardianPhone: "",
     accessMode: "HOURLY" as AccessMode,
     contractedMinutes: "60",
-    orderMode: "new" as "new" | "existing",
+    orderMode: "new" as "new" | "existing" | "table",
     orderId: "",
+    tableId: "",
     notes: "",
   });
   const [checkoutForm, setCheckoutForm] = useState({
@@ -203,6 +210,7 @@ export default function ChildrenPage() {
   });
 
   const resetForm = () => {
+    checkinAttempt.current = null;
     setForm({
       childName: "",
       childAge: "",
@@ -212,6 +220,7 @@ export default function ChildrenPage() {
       contractedMinutes: "60",
       orderMode: "new",
       orderId: "",
+    tableId: "",
       notes: "",
     });
   };
@@ -228,6 +237,7 @@ export default function ChildrenPage() {
   }, [branchId]);
 
   const loadOpenOrders = useCallback(() => {
+    tablesApi.getAll(branchId).then(setTables).catch(() => setTables([]));
     ordersApi.getAll({ branchId })
       .then((orders: OpenOrder[]) => {
         setOpenOrders(
@@ -261,12 +271,16 @@ export default function ChildrenPage() {
   const warningCount = liveRecords.filter((record) => record.runtimeStatus === "WARNING" || record.runtimeStatus === "GRACE").length;
 
   const handleRegister = async () => {
+    if (checkinBusy.current) return;
+    checkinBusy.current = true;
     setIsSubmitting(true);
     setRegisterError(null);
     setLoadError(null);
     try {
       const payload = {
         branchId,
+        requestId: (checkinAttempt.current ??= createPaymentAttemptId()),
+        tableId: form.orderMode === "table" ? form.tableId : undefined,
         childName: form.childName,
         childAge: form.childAge ? Number(form.childAge) : undefined,
         guardianName: form.guardianName,
@@ -297,6 +311,7 @@ export default function ChildrenPage() {
     } catch (error) {
       setRegisterError(getApiErrorMessage(error, "No se pudo guardar el registro. Intenta nuevamente."));
     } finally {
+      checkinBusy.current = false;
       setIsSubmitting(false);
     }
   };
@@ -312,6 +327,7 @@ export default function ChildrenPage() {
     } catch {
       setLoadError("No se pudo finalizar. Valida codigo, tutor y sucursal.");
     } finally {
+      checkinBusy.current = false;
       setIsSubmitting(false);
     }
   };
@@ -384,6 +400,9 @@ export default function ChildrenPage() {
                     <div className="flex justify-between"><span className="text-muted-foreground">Tutor</span><span>{child.guardianName}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Código</span><span className="font-mono font-bold">{child.accessCode}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Ticket</span><span>{child.order?.orderNumber ?? "Sin ticket"}</span></div>
+                    <div className="flex justify-between"><span>Ingreso</span><span>{new Date(child.entryTime).toLocaleString('es-MX')}</span></div>
+                    <div className="flex justify-between"><span>Tolerancia</span><span>{child.graceMinutes} min</span></div>
+                    {child.exitTime && <div>Salida: {new Date(child.exitTime).toLocaleString('es-MX')}</div>}
                     <div className="flex justify-between"><span className="text-muted-foreground">Total estimado</span><span>{formatCurrency(child.calculatedTotalAmount)}</span></div>
                     {child.calculatedExtraAmount > 0 && (
                       <div className="flex justify-between text-red-600"><span>Extra</span><span>{formatCurrency(child.calculatedExtraAmount)}</span></div>
@@ -402,6 +421,7 @@ export default function ChildrenPage() {
                           contractedMinutes: String(child.contractedMinutes ?? 60),
                           orderMode: child.orderId ? "existing" : "new",
                           orderId: child.orderId ?? "",
+                          tableId: "",
                           notes: child.notes ?? "",
                         });
                         setRegisterOpen(true);
@@ -446,14 +466,19 @@ export default function ChildrenPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Ticket</Label>
-                <Select value={form.orderMode} onValueChange={(value: "new" | "existing") => setForm((p) => ({ ...p, orderMode: value, orderId: "" }))}>
+                <Select value={form.orderMode} onValueChange={(value: "new" | "existing" | "table") => setForm((p) => ({ ...p, orderMode: value, orderId: "" }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="new">Crear ticket nuevo</SelectItem>
                     <SelectItem value="existing">Usar ticket abierto</SelectItem>
+                    <SelectItem value="table">Vincular a mesa</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              {form.orderMode === 'table' && <div className="space-y-1.5"><Label>Mesa</Label>
+                <Select value={form.tableId} onValueChange={value => setForm(p => ({ ...p, tableId: value }))}><SelectTrigger><SelectValue placeholder="Seleccionar mesa" /></SelectTrigger><SelectContent>
+                  {tables.filter(t => ['AVAILABLE', 'RESERVED', 'OCCUPIED'].includes(t.status)).map(t => <SelectItem key={t.id} value={t.id}>Mesa {t.number} · {t.area?.name}</SelectItem>)}
+                </SelectContent></Select></div>}
               {form.orderMode === "existing" && (
                 <div className="space-y-1.5">
                   <Label>Orden abierta</Label>
@@ -474,7 +499,7 @@ export default function ChildrenPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRegisterOpen(false)}>Cancelar</Button>
-            <Button onClick={handleRegister} disabled={!form.childName || !form.guardianName || (!editingRecord && form.orderMode === "existing" && !form.orderId) || isSubmitting}>
+            <Button onClick={handleRegister} disabled={!form.childName || !form.guardianName || (!editingRecord && form.orderMode === "existing" && !form.orderId) || (!editingRecord && form.orderMode === "table" && !form.tableId) || isSubmitting}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {editingRecord ? "Guardar corrección" : "Registrar"}
             </Button>
@@ -492,6 +517,9 @@ export default function ChildrenPage() {
                 Acceso finalizado correctamente
               </div>
               <div className="rounded-lg bg-muted p-3 text-sm">
+                <p>Ingreso: {new Date(checkoutResult.access.entryTime).toLocaleString('es-MX')}</p>
+                <p>Salida: {new Date(checkoutResult.access.exitTime).toLocaleString('es-MX')}</p>
+                <p>Tiempo contratado: {checkoutResult.access.contractedMinutes} min. Tolerancia: {checkoutResult.access.graceMinutes} min.</p>
                 <div className="flex justify-between"><span>Base</span><span>{formatCurrency(checkoutResult.chargeSummary.baseAmount)}</span></div>
                 <div className="flex justify-between"><span>Extra</span><span>{formatCurrency(checkoutResult.chargeSummary.extraAmount)}</span></div>
                 <div className="mt-2 flex justify-between font-bold"><span>Total</span><span>{formatCurrency(checkoutResult.chargeSummary.totalAmount)}</span></div>

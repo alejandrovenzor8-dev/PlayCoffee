@@ -3,6 +3,8 @@ export type PrintTicketType = "CUSTOMER" | "KITCHEN" | "BAR";
 export interface PrintTicketDocument {
   type: PrintTicketType;
   width: "58mm" | "80mm";
+  dispatch?: { batchId?: string; sentAt?: string; kind?: "NEW" | "REPRINT" | "CANCELLATION"; originalBatchId?: string; reason?: string };
+  cashierDocument?: { kind: 'PREBILL' | 'BUSINESS'; receiptId: string; issuedAt: string; reprint?: boolean; sourceJobId?: string };
   config: {
     businessName: string;
     branchName: string;
@@ -18,6 +20,8 @@ export interface PrintTicketDocument {
     orderNumber: string;
     status: string;
     createdAt: string;
+    timezone?: string;
+    area?: string | null;
     table: string | null;
     cashier: string | null;
     waiter: string | null;
@@ -58,4 +62,11 @@ export interface PrintTicketPayment {
   receivedAmount: number | null;
   changeAmount: number;
   reference: string | null;
+}
+
+export interface CashierPrintPolicy {
+  cashierMode: 'BUSINESS_ONLY' | 'CUSTOMER_AND_BUSINESS';
+  autoCustomer: boolean;
+  confirmClose: boolean;
+  allowReprint: boolean;
 }

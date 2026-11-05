@@ -55,17 +55,17 @@ $frontendProcess = $null
 $proxyProcess = $null
 $printAgentProcess = $null
 try {
-    $backendProcess = Start-Process -FilePath $node -ArgumentList @($backendEntry) -WorkingDirectory $backend -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'backend.out.log') -RedirectStandardError (Join-Path $logDirectory 'backend.error.log')
+    $backendProcess = Start-Process -FilePath $node -ArgumentList @("`"$backendEntry`"") -WorkingDirectory $backend -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'backend.out.log') -RedirectStandardError (Join-Path $logDirectory 'backend.error.log')
     $frontendPort = if ($config['FRONTEND_PORT']) { $config['FRONTEND_PORT'] } else { '3000' }
     $frontendHost = if ($config['HTTPS_ENABLED'] -eq 'true') { '127.0.0.1' } else { '0.0.0.0' }
-    $frontendProcess = Start-Process -FilePath $node -ArgumentList @($nextEntry, 'start', '-H', $frontendHost, '-p', $frontendPort) -WorkingDirectory $frontend -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'frontend.out.log') -RedirectStandardError (Join-Path $logDirectory 'frontend.error.log')
+    $frontendProcess = Start-Process -FilePath $node -ArgumentList @("`"$nextEntry`"", 'start', '-H', $frontendHost, '-p', $frontendPort) -WorkingDirectory $frontend -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'frontend.out.log') -RedirectStandardError (Join-Path $logDirectory 'frontend.error.log')
     if ($config['HTTPS_ENABLED'] -eq 'true') {
         foreach ($requiredTls in @($proxyEntry, $config['TLS_PFX_PATH'])) {
             if (-not (Test-Path -LiteralPath $requiredTls)) { throw "Falta archivo HTTPS: $requiredTls" }
         }
-        $proxyProcess = Start-Process -FilePath $node -ArgumentList @($proxyEntry) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'https.out.log') -RedirectStandardError (Join-Path $logDirectory 'https.error.log')
+        $proxyProcess = Start-Process -FilePath $node -ArgumentList @("`"$proxyEntry`"") -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'https.out.log') -RedirectStandardError (Join-Path $logDirectory 'https.error.log')
     }
-    $printAgentProcess = Start-Process -FilePath $node -ArgumentList @($printAgentEntry) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'print-agent.out.log') -RedirectStandardError (Join-Path $logDirectory 'print-agent.error.log')
+    $printAgentProcess = Start-Process -FilePath $node -ArgumentList @("`"$printAgentEntry`"") -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'print-agent.out.log') -RedirectStandardError (Join-Path $logDirectory 'print-agent.error.log')
 } catch {
     foreach ($started in @($printAgentProcess, $proxyProcess, $frontendProcess, $backendProcess)) {
         if ($started) { Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue }

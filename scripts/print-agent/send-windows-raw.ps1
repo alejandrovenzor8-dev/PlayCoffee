@@ -26,8 +26,8 @@ public static class RawPrinter {
         if (!StartPagePrinter(handle)) throw new System.ComponentModel.Win32Exception();
         byte[] bytes = File.ReadAllBytes(file); int written;
         if (!WritePrinter(handle, bytes, bytes.Length, out written) || written != bytes.Length) throw new IOException("No se escribió el ticket completo");
-        EndPagePrinter(handle);
-      } finally { EndDocPrinter(handle); }
+        if (!EndPagePrinter(handle)) throw new System.ComponentModel.Win32Exception();
+      } finally { if (!EndDocPrinter(handle)) throw new System.ComponentModel.Win32Exception(); }
     } finally { ClosePrinter(handle); }
   }
 }

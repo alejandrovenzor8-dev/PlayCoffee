@@ -1,9 +1,11 @@
+import { IsUUID, IsOptional as OptionalRequest } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { ArrayNotEmpty, IsArray, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateOrderItemDto } from './create-order.dto';
 
 export class AddOrderItemsDto {
+  @IsUUID() @OptionalRequest() requestId?: string;
   @ApiProperty({ type: [CreateOrderItemDto] })
   @IsArray()
   @ArrayNotEmpty()

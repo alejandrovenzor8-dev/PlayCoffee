@@ -1,3 +1,4 @@
+import { CorrectOrderItemDto } from './dto/correct-order-item.dto';
 import {
   Controller,
   Get,
@@ -135,6 +136,7 @@ export class OrdersController {
       dto.items,
       userBranchId,
       userId,
+      dto.requestId,
     );
     this.realtime.emitOrderEvent(order.branchId, 'order.sent_to_kitchen', {
       id: order.id,
@@ -148,6 +150,28 @@ export class OrdersController {
       status: order.status,
       total: order.total,
     });
+    return order;
+  }
+
+  @Patch(':id/items/:itemId')
+  @Roles(UserRoleEnum.WAITER, UserRoleEnum.CASHIER)
+  async correctItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: CorrectOrderItemDto,
+    @CurrentUser('branchId') branchId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: UserRoleEnum,
+  ) {
+    const order = await this.ordersService.correctItem(
+      id,
+      itemId,
+      dto,
+      branchId,
+      userId,
+      role,
+    );
+    this.realtime.emitOrderEvent(branchId, 'order.updated', { id });
     return order;
   }
 

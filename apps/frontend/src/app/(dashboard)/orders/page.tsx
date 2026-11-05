@@ -1,5 +1,7 @@
 "use client";
 
+import { CashierTicketActions } from "@/components/print/CashierTicketActions";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AxiosError } from "axios";
 import { ordersApi, printApi } from "@/lib/api";
@@ -7,9 +9,12 @@ import { getActiveBranchId } from "@/lib/branch";
 import { useOrdersStore } from "@/store/orders.store";
 import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
-import type { OrderStatus } from "@/types/orders.types";
+import type { OrderStatus, OrderItem } from "@/types/orders.types";
 import type { PrintTicketDocument, PrintTicketType } from "@/types/print.types";
 import { PageHeader } from "@/components/layout/page-header";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,7 +27,6 @@ import {
   ChefHat,
   ClipboardList,
   Coffee,
-  Printer,
   RefreshCw,
   ChevronRight,
   Loader2,
@@ -73,6 +77,10 @@ export default function OrdersPage() {
   const [printOpen, setPrintOpen] = useState(false);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
   const [isQueueing, setIsQueueing] = useState(false);
+  const [correction, setCorrection] = useState<{ orderId: string; item: OrderItem; quantity: string; notes: string; reason: string } | null>(null);
+  const [batches, setBatches] = useState<Array<{ id: string; type: string; status: string; lastError?: string }> | null>(null);
+  const [reprintReason, setReprintReason] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const loadOrders = useCallback(() => {
     setLoading(true);
@@ -152,7 +160,9 @@ export default function OrdersPage() {
     setIsQueueing(true);
     setLoadError(null);
     try {
-      await printApi.queue(printDocument.order.id, printDocument.type);
+      const job = await printApi.queue(printDocument.order.id, printDocument.type);
+      if (!job) setLoadError('No hay productos nuevos pendientes para esta estación. Consulta los lotes para reimprimir.');
+      loadOrders();
       setPrintOpen(false);
     } catch (error) {
       setLoadError(getApiErrorMessage(error, "No se pudo enviar el ticket a la impresora local."));
@@ -191,7 +201,7 @@ export default function OrdersPage() {
           </div>
         )}
 
-        <TabsList>
+        <TabsList className="grid h-auto w-full grid-cols-2 sm:inline-flex sm:w-auto">
           {TABS.map(({ value, label, statuses }) => (
             <TabsTrigger key={value} value={value}>
               {label}
@@ -242,24 +252,15 @@ export default function OrdersPage() {
                               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
                                 {item.quantity}
                               </span>
-                              <span className="flex-1">{item.product.name}</span>
+                              <span className="min-w-0 flex-1 break-words">{item.product.name}<small className="block text-muted-foreground">{item.preparationStatus ?? 'LEGACY'}{item.notes ? ` · ${item.notes}` : ''}</small></span>
+                              {!['COMPLETED', 'CANCELLED'].includes(order.status) && <Button size="sm" variant="outline" onClick={() => setCorrection({ orderId: order.id, item, quantity: String(item.quantity), notes: item.notes ?? '', reason: '' })}>Corregir</Button>}
                               <span className="text-muted-foreground">{formatCurrency(item.totalPrice)}</span>
                             </li>
                           ))}
                         </ul>
 
-                        <div className="grid grid-cols-3 gap-2 border-t pt-3">
-                          {canPrintCustomer && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handlePrint(order.id, "CUSTOMER")}
-                              disabled={isPrinting === `${order.id}-CUSTOMER`}
-                            >
-                              <Printer className="h-3.5 w-3.5 mr-1" />
-                              Cliente
-                            </Button>
-                          )}
+                        <div className="grid grid-cols-2 gap-2 border-t pt-3">
+
                           <Button
                             size="sm"
                             variant="outline"
@@ -267,7 +268,7 @@ export default function OrdersPage() {
                             disabled={isPrinting === `${order.id}-KITCHEN`}
                           >
                             <ChefHat className="h-3.5 w-3.5 mr-1" />
-                            Cocina
+                            Nueva cocina
                           </Button>
                           <Button
                             size="sm"
@@ -276,10 +277,15 @@ export default function OrdersPage() {
                             disabled={isPrinting === `${order.id}-BAR`}
                           >
                             <Coffee className="h-3.5 w-3.5 mr-1" />
-                            Barra
+                            Nueva barra
                           </Button>
                         </div>
 
+                        <CashierTicketActions orderId={order.id} status={order.status} />
+                        {canPrintCustomer && <Button size="sm" variant="outline" onClick={async () => {
+                          try { setBatches(await printApi.batches(order.id)); setReprintReason(''); }
+                          catch (error) { setLoadError(getApiErrorMessage(error, 'No se pudieron cargar los lotes')); }
+                        }}>Reimprimir comanda anterior</Button>}
                         <div className="flex items-center justify-between">
                           <div>
                             <span className="text-sm font-bold">{formatCurrency(order.total)}</span>
@@ -310,6 +316,39 @@ export default function OrdersPage() {
           </TabsContent>
         ))}
       </Tabs>
+      <Dialog open={Boolean(correction)} onOpenChange={open => { if (!open) setCorrection(null); }}>
+        <DialogContent><DialogHeader><DialogTitle>Corregir {correction?.item.product.name}</DialogTitle></DialogHeader>
+          <p className="text-sm">Usa cantidad 0 para cancelar. Los productos enviados requieren ADMIN/CASHIER y generan un aviso de cancelación; el reemplazo queda pendiente de envío.</p>
+          <Label>Cantidad<Input type="number" min={0} step={1} value={correction?.quantity ?? ''} onChange={e => setCorrection(c => c && ({ ...c, quantity: e.target.value }))} /></Label>
+          <Label>Notas<Input value={correction?.notes ?? ''} onChange={e => setCorrection(c => c && ({ ...c, notes: e.target.value }))} /></Label>
+          <Label>Motivo obligatorio<Input value={correction?.reason ?? ''} onChange={e => setCorrection(c => c && ({ ...c, reason: e.target.value }))} /></Label>
+          <DialogFooter><Button disabled={isSaving || !correction || correction.reason.trim().length < 3 || !Number.isInteger(Number(correction.quantity)) || Number(correction.quantity) < 0} onClick={async () => {
+            if (!correction || isSaving) return;
+            setIsSaving(true);
+            try {
+              await ordersApi.correctItem(correction.orderId, correction.item.id, { quantity: Number(correction.quantity), notes: correction.notes, reason: correction.reason });
+              setCorrection(null); loadOrders();
+            } catch (error) { setLoadError(getApiErrorMessage(error, 'No se pudo corregir el producto')); setCorrection(null); }
+            finally { setIsSaving(false); }
+          }}>Guardar corrección</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={batches !== null} onOpenChange={open => { if (!open) setBatches(null); }}>
+        <DialogContent><DialogHeader><DialogTitle>Reimprimir comanda anterior</DialogTitle></DialogHeader>
+          <p className="text-sm">Comprueba la impresora antes de repetir un lote fallido: puede haberse impreso aunque no haya confirmación. Esta acción registra tu usuario y motivo.</p>
+          <Label>Motivo<Input value={reprintReason} onChange={e => setReprintReason(e.target.value)} /></Label>
+          <div className="max-h-80 space-y-3 overflow-auto">{batches?.map(batch => <div key={batch.id} className="rounded border p-2 text-sm">
+            <p className="break-all">{batch.type} · {batch.id}</p><p>{batch.status} {batch.lastError}</p>
+            <Button size="sm" disabled={isSaving || reprintReason.trim().length < 3 || !['PRINTED', 'FAILED'].includes(batch.status)} onClick={async () => {
+              if (isSaving || !window.confirm(`¿Confirmas reimprimir el lote ${batch.id}?`)) return;
+              setIsSaving(true);
+              try { await printApi.reprint(batch.id, reprintReason); setBatches(null); loadOrders(); }
+              catch (error) { setLoadError(getApiErrorMessage(error, 'No se pudo reimprimir')); setBatches(null); }
+              finally { setIsSaving(false); }
+            }}>Confirmar reimpresión</Button>
+          </div>)}{batches?.length === 0 && <p>No hay lotes registrados. Las líneas anteriores a esta actualización requieren revisión operativa.</p>}</div>
+        </DialogContent>
+      </Dialog>
       <PrintableTicket
         open={printOpen}
         onOpenChange={setPrintOpen}

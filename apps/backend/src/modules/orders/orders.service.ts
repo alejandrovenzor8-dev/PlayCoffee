@@ -1,6 +1,9 @@
+import { isTransactionConflict } from '../../common/transaction-conflict';
+import { CorrectOrderItemDto } from './dto/correct-order-item.dto';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -14,6 +17,7 @@ import {
   PaymentStatus,
   Prisma,
   TableStatus,
+  UserRoleEnum,
 } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -59,55 +63,98 @@ export class OrdersService {
 
   async create(dto: CreateOrderDto, userId: string) {
     if (!dto.branchId) throw new BadRequestException('branchId is required');
-    const order = await this.prisma.$transaction(async (tx) => {
-      if (dto.tableId) {
-        const table = await tx.restaurantTable.findFirst({
-          where: {
-            id: dto.tableId,
-            deletedAt: null,
-            area: { branchId: dto.branchId },
-          },
-          select: { id: true },
-        });
-        if (!table) {
-          throw new BadRequestException('Table does not belong to this branch');
+    const order = await this.prisma
+      .$transaction(async (tx) => {
+        if (dto.requestId) {
+          const previous = await tx.order.findUnique({
+            where: { requestId: dto.requestId },
+            include: this.orderInclude(),
+          });
+          if (previous) {
+            if (previous.branchId !== dto.branchId)
+              throw new ConflictException('Referencia de otra sucursal');
+            return previous;
+          }
         }
-      }
+        if (dto.tableId) {
+          await tx.$queryRaw`SELECT id FROM restaurant_tables WHERE id = ${dto.tableId} FOR UPDATE`;
+          const table = await tx.restaurantTable.findFirst({
+            where: {
+              id: dto.tableId,
+              deletedAt: null,
+              area: { branchId: dto.branchId },
+            },
+            select: { id: true },
+          });
+          if (!table) {
+            throw new BadRequestException(
+              'Table does not belong to this branch',
+            );
+          }
+        }
 
-      const { subtotal, itemsData } = await this.buildOrderItems(dto.items, tx);
-      const taxAmount = subtotal * 0; // Tax handled at item level if needed
-      const total = subtotal + taxAmount;
-      const orderNumber = this.createOrderNumber();
+        if (dto.tableId) {
+          const active = await tx.order.findFirst({
+            where: {
+              tableId: dto.tableId,
+              deletedAt: null,
+              status: { notIn: ['COMPLETED', 'CANCELLED'] },
+            },
+          });
+          if (active)
+            throw new ConflictException(
+              'La mesa ya tiene una orden activa. Actualiza y agrega productos a ese ticket.',
+            );
+        }
+        const { subtotal, itemsData } = await this.buildOrderItems(
+          dto.items,
+          tx,
+        );
+        const taxAmount = subtotal * 0; // Tax handled at item level if needed
+        const total = subtotal + taxAmount;
+        const orderNumber = this.createOrderNumber();
 
-      const createdOrder = await tx.order.create({
-        data: {
-          branchId: dto.branchId,
-          tableId: dto.tableId,
-          userId,
-          orderNumber,
-          status: OrderStatus.PENDING,
-          notes: dto.notes,
-          subtotal,
-          taxAmount,
-          discountAmount: 0,
-          total,
-          isDelivery: dto.isDelivery ?? false,
-          isTakeaway: dto.isTakeaway ?? false,
-          deliveryAddress: dto.deliveryAddress,
-          items: { create: itemsData as never },
-        },
-        include: this.orderInclude(),
-      });
-
-      if (dto.tableId) {
-        await tx.restaurantTable.update({
-          where: { id: dto.tableId },
-          data: { status: TableStatus.OCCUPIED },
+        const createdOrder = await tx.order.create({
+          data: {
+            branchId: dto.branchId,
+            requestId: dto.requestId,
+            tableId: dto.tableId,
+            userId,
+            orderNumber,
+            status: OrderStatus.PENDING,
+            notes: dto.notes,
+            subtotal,
+            taxAmount,
+            discountAmount: 0,
+            total,
+            isDelivery: dto.isDelivery ?? false,
+            isTakeaway: dto.isTakeaway ?? false,
+            deliveryAddress: dto.deliveryAddress,
+            items: { create: itemsData as never },
+          },
+          include: this.orderInclude(),
         });
-      }
 
-      return createdOrder;
-    });
+        if (dto.tableId) {
+          await tx.restaurantTable.update({
+            where: { id: dto.tableId },
+            data: { status: TableStatus.OCCUPIED },
+          });
+        }
+
+        return createdOrder;
+      })
+      .catch((error: unknown) => {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          ['P2002', 'P2034'].includes(error.code)
+        ) {
+          throw new ConflictException(
+            'La mesa cambió en otro dispositivo. Actualiza antes de reintentar.',
+          );
+        }
+        throw error;
+      });
 
     await this.audit.record({
       branchId: order.branchId,
@@ -136,6 +183,7 @@ export class OrdersService {
       table: true,
       user: { select: { id: true, firstName: true, lastName: true } },
       items: {
+        where: { status: { not: OrderStatus.CANCELLED } },
         include: {
           product: true,
           modifiers: { include: { modifier: true } },
@@ -265,17 +313,30 @@ export class OrdersService {
     items: CreateOrderItemDto[],
     branchId?: string,
     userId?: string,
+    requestId?: string,
   ) {
     if (!items.length) throw new BadRequestException('items are required');
     if (!branchId) throw new BadRequestException('branchId is required');
-    const previousItemIds = new Set<string>();
     const updatedOrder = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} AND "branchId" = ${branchId} FOR UPDATE`;
       const order = await tx.order.findFirst({
         where: { id, branchId, deletedAt: null },
         include: this.orderInclude(),
       });
       if (!order) throw new NotFoundException('Order not found');
-      order.items.forEach((item) => previousItemIds.add(item.id));
+      if (requestId) {
+        const previous = await tx.orderSubmission.findUnique({
+          where: { id: requestId },
+        });
+        if (previous) {
+          if (previous.orderId !== id || previous.branchId !== branchId)
+            throw new ConflictException('Referencia de otro ticket');
+          return order;
+        }
+        await tx.orderSubmission.create({
+          data: { id: requestId, orderId: id, branchId },
+        });
+      }
       if (
         order.status === OrderStatus.CANCELLED ||
         order.status === OrderStatus.COMPLETED
@@ -294,7 +355,10 @@ export class OrdersService {
       const nextSubtotal = Number(order.subtotal) + itemsSubtotal;
       const nextTaxAmount = Number(order.taxAmount);
       const nextTotal =
-        nextSubtotal + nextTaxAmount - Number(order.discountAmount);
+        nextSubtotal +
+        nextTaxAmount +
+        Number(order.tipAmount) -
+        Number(order.discountAmount);
 
       const changedOrder = await tx.order.update({
         where: { id },
@@ -333,12 +397,148 @@ export class OrdersService {
     await this.printService.queueProductionTickets(
       updatedOrder.id,
       updatedOrder.branchId,
-      updatedOrder.items
-        .filter((item) => !previousItemIds.has(item.id))
-        .map((item) => item.id),
+      updatedOrder.items.map((item) => item.id),
     );
 
     return updatedOrder;
+  }
+
+  async correctItem(
+    id: string,
+    itemId: string,
+    dto: CorrectOrderItemDto,
+    branchId: string,
+    userId: string,
+    role: UserRoleEnum,
+  ) {
+    if (!branchId || !userId)
+      throw new BadRequestException('Sucursal y usuario requeridos');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} AND "branchId" = ${branchId} FOR UPDATE`;
+      const order = await tx.order.findFirst({
+        where: { id, branchId, deletedAt: null },
+        include: {
+          payments: true,
+          items: { include: { product: true, modifiers: true } },
+        },
+      });
+      if (!order) throw new NotFoundException('Order not found');
+      if (
+        ['COMPLETED', 'CANCELLED'].includes(order.status) ||
+        order.payments.some((p) => p.status === 'COMPLETED') ||
+        order.inventoryDiscountedAt
+      ) {
+        throw new ConflictException(
+          'La orden tiene pagos o está cerrada. Usa el flujo de devolución.',
+        );
+      }
+      const item = order.items.find(
+        (i) => i.id === itemId && i.status !== 'CANCELLED',
+      );
+      if (!item) throw new NotFoundException('Producto no encontrado');
+      if (
+        await tx.childAccess.count({
+          where: {
+            OR: [{ baseOrderItemId: itemId }, { extraOrderItemId: itemId }],
+          },
+        })
+      ) {
+        throw new ConflictException(
+          'Corrige este cargo desde Control infantil.',
+        );
+      }
+      const dispatched =
+        ['QUEUED', 'SENT'].includes(item.preparationStatus) ||
+        (item.preparationStatus === 'LEGACY' &&
+          item.product.preparationStation !== 'NONE');
+      if (dispatched && !['ADMIN', 'SUPER_ADMIN', 'CASHIER'].includes(role))
+        throw new ForbiddenException('Requiere autorización ADMIN/CASHIER');
+      if (dispatched) {
+        const job = item.preparationJobId
+          ? await tx.printJob.findUnique({
+              where: { id: item.preparationJobId },
+            })
+          : null;
+        if (job && ['PENDING', 'PROCESSING'].includes(job.status))
+          throw new ConflictException(
+            'Espera a que termine el envío de esta comanda.',
+          );
+        await this.printService.queueCancellation(
+          tx,
+          id,
+          branchId,
+          itemId,
+          dto.reason,
+        );
+      }
+      // Keep the original line and its dispatch history; a correction creates a new pending line.
+      await tx.orderItem.update({
+        where: { id: itemId },
+        data: { status: OrderStatus.CANCELLED },
+      });
+      const unitTotal = Number(item.totalPrice) / item.quantity;
+      const replacement =
+        dto.quantity > 0
+          ? await tx.orderItem.create({
+              data: {
+                orderId: id,
+                productId: item.productId,
+                quantity: dto.quantity,
+                unitPrice: item.unitPrice,
+                totalPrice: Math.round(unitTotal * dto.quantity * 100) / 100,
+                notes: dto.notes ?? item.notes,
+                modifiers: {
+                  create: item.modifiers.map((m) => ({
+                    modifierId: m.modifierId,
+                    quantity: m.quantity,
+                    price: m.price,
+                  })),
+                },
+              },
+            })
+          : null;
+      const subtotal =
+        Math.round(
+          (Number(order.subtotal) -
+            Number(item.totalPrice) +
+            unitTotal * dto.quantity) *
+            100,
+        ) / 100;
+      await tx.order.update({
+        where: { id },
+        data: {
+          subtotal,
+          total:
+            subtotal +
+            Number(order.taxAmount) +
+            Number(order.tipAmount) -
+            Number(order.discountAmount),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          branchId,
+          userId,
+          action: 'ORDER_ITEM_CORRECTED',
+          entity: 'OrderItem',
+          entityId: itemId,
+          metadata: {
+            reason: dto.reason,
+            orderId: id,
+            previousQuantity: item.quantity,
+            previousNotes: item.notes,
+            quantity: dto.quantity,
+            notes: dto.notes ?? item.notes,
+            replacementId: replacement?.id ?? null,
+            dispatched,
+          },
+        },
+      });
+      return tx.order.findUniqueOrThrow({
+        where: { id },
+        include: this.orderInclude(),
+      });
+    });
   }
 
   private createOrderNumber() {
@@ -356,11 +556,43 @@ export class OrdersService {
     const { order, updatedOrder, nextStatus } = await this.prisma
       .$transaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} AND "branchId" = ${branchId} FOR UPDATE`;
           const order = await tx.order.findFirst({
             where: { id, branchId, deletedAt: null },
             include: this.orderInclude(),
           });
           if (!order) throw new NotFoundException('Order not found');
+          if (
+            [OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(
+              order.status as 'COMPLETED' | 'CANCELLED',
+            )
+          )
+            throw new ConflictException('La orden está cerrada');
+          if (
+            dto.status === OrderStatus.CANCELLED &&
+            order.items.some(
+              (i) =>
+                ['QUEUED', 'SENT'].includes(i.preparationStatus) ||
+                (i.preparationStatus === 'LEGACY' &&
+                  i.product.preparationStation !== 'NONE'),
+            )
+          ) {
+            throw new ConflictException(
+              'Cancela primero los productos enviados mediante una corrección autorizada.',
+            );
+          }
+          if (
+            dto.status === OrderStatus.CANCELLED ||
+            dto.status === OrderStatus.COMPLETED
+          ) {
+            const activeChild = await tx.childAccess.count({
+              where: { orderId: id, exitTime: null },
+            });
+            if (activeChild)
+              throw new ConflictException(
+                'Registra la salida infantil antes de cerrar la cuenta.',
+              );
+          }
           if (dto.status) {
             this.assertStatusChangeAllowed(order, dto.status);
           }
@@ -408,10 +640,7 @@ export class OrdersService {
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       )
       .catch((error: unknown) => {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2034'
-        ) {
+        if (isTransactionConflict(error)) {
           throw new ConflictException(
             'La orden cambió en otro dispositivo. Actualiza e intenta nuevamente.',
           );
@@ -478,15 +707,6 @@ export class OrdersService {
     ) {
       throw new BadRequestException(
         'No se puede cancelar una orden con pagos registrados.',
-      );
-    }
-    if (
-      nextStatus === OrderStatus.COMPLETED &&
-      order.status !== OrderStatus.DELIVERED &&
-      order.items.some((item) => item.product.preparationStation !== 'NONE')
-    ) {
-      throw new ConflictException(
-        'Entrega primero la comanda antes de cerrarla.',
       );
     }
     if (nextStatus !== OrderStatus.COMPLETED) return;

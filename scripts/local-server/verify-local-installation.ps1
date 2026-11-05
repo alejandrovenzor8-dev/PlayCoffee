@@ -9,7 +9,7 @@ Import-Module (Join-Path $PSScriptRoot 'PlayCoffee.LocalServer.psm1') -Force
 
 $config = Get-PlayCoffeeEnvironment -Path $ConfigPath
 $data = Get-PlayCoffeeRuntimePath -Config $config -Name 'PLAYCOFFEE_DATA'
-& (Join-Path $PSScriptRoot 'status-local-server.ps1') -ConfigPath $ConfigPath
+& powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'status-local-server.ps1') -ConfigPath $ConfigPath
 if ($LASTEXITCODE -ne 0) { throw 'Los procesos locales no estan saludables' }
 
 if ($config['HTTPS_ENABLED'] -eq 'true') {

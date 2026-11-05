@@ -9,6 +9,7 @@ Import-Module (Join-Path $PSScriptRoot 'PlayCoffee.LocalServer.psm1') -Force
 if ($RetentionDays -lt 1) { throw 'RetentionDays debe ser mayor o igual a 1' }
 
 $config = Get-PlayCoffeeEnvironment -Path $ConfigPath
+Set-PlayCoffeeEnvironment -Values $config
 $data = Get-PlayCoffeeRuntimePath -Config $config -Name 'PLAYCOFFEE_DATA'
 $databaseUrl = [Uri]$config['DATABASE_URL']
 $userInfo = $databaseUrl.UserInfo -split ':', 2

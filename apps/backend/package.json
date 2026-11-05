@@ -16,6 +16,7 @@
     "start:railway": "prisma migrate deploy && node dist/src/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
+    "test:regression": "jest --config ./test/jest-e2e.json production-regression.e2e-spec.ts --runInBand",
     "test:smoke": "jest --config ./test/jest-e2e.json smoke.e2e-spec.ts --runInBand",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
