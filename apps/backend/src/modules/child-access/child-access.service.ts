@@ -19,6 +19,7 @@ import {
 } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { UpdateChildPricingDto } from './dto/update-child-pricing.dto';
 
 type ChildAccessWithOrder = ChildAccess & {
   order?: {
@@ -45,6 +46,52 @@ export class ChildAccessService {
     private audit: AuditService,
     private realtime: RealtimeGateway,
   ) {}
+
+  async getPricing(branchId?: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const settings = await this.prisma.setting.findMany({
+      where: {
+        branchId,
+        key: { in: ['child_hourly_rate', 'child_extra_half_hour_rate'] },
+      },
+    });
+    const values = new Map(settings.map(({ key, value }) => [key, value]));
+    const rate = (key: string, fallback: number) => {
+      const value = values.get(key);
+      return value !== undefined && Number.isFinite(Number(value))
+        ? Number(value)
+        : fallback;
+    };
+    return {
+      hourlyRate: rate('child_hourly_rate', 99),
+      extraHalfHourRate: rate('child_extra_half_hour_rate', 49),
+    };
+  }
+
+  async updatePricing(
+    branchId: string | undefined,
+    dto: UpdateChildPricingDto,
+  ) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const entries = [
+      ['child_hourly_rate', dto.hourlyRate],
+      ['child_extra_half_hour_rate', dto.extraHalfHourRate],
+    ] as const;
+    await this.prisma.$transaction(
+      entries.map(([key, price]) => {
+        const value = String(price);
+        return this.prisma.setting.upsert({
+          where: { branchId_key: { branchId, key } },
+          create: { branchId, key, value, group: 'child_access' },
+          update: { value },
+        });
+      }),
+    );
+    return {
+      hourlyRate: dto.hourlyRate,
+      extraHalfHourRate: dto.extraHalfHourRate,
+    };
+  }
 
   async findActive(branchId?: string): Promise<RuntimeChildAccess[]> {
     if (!branchId) throw new BadRequestException('branchId is required');
@@ -103,16 +150,8 @@ export class ChildAccessService {
       'child_grace_minutes',
       15,
     );
-    const baseHourRate = await this.getNumberSetting(
-      dto.branchId,
-      'child_hourly_rate',
-      99,
-    );
-    const extraHalfHourRate = await this.getNumberSetting(
-      dto.branchId,
-      'child_extra_half_hour_rate',
-      49,
-    );
+    const { hourlyRate: baseHourRate, extraHalfHourRate } =
+      await this.getPricing(dto.branchId);
     const siblingDiscountPercent = await this.getNumberSetting(
       dto.branchId,
       'child_sibling_discount_percent',

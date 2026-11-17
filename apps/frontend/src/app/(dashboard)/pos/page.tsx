@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cashApi, getApiErrorMessage, productsApi, ordersApi, paymentsApi, tablesApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useCartStore } from "@/store/cart.store";
+import { usePosSessionStore } from "@/store/pos-session.store";
 import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
 import { createPaymentAttemptId } from "@/lib/payment-id";
@@ -56,6 +57,10 @@ type PosOrder = {
   total?: number;
   status?: string;
 };
+type PendingOrder = PosOrder & {
+  tableId?: string | null;
+  payments?: Array<{ amount: number; status: string }>;
+};
 type PaymentConfig = {
   tipEnabled: boolean;
   defaultTipPercentage: number;
@@ -87,6 +92,8 @@ export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
+  const [pendingOrdersError, setPendingOrdersError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -125,6 +132,7 @@ export default function PosPage() {
   const clearClosedOrder = useCallback(() => {
     orderLoadVersion.current += 1;
     activeOrderId.current = null;
+    usePosSessionStore.getState().clearOrder();
     useCartStore.getState().clearCart();
     setCurrentOrder(null);
     setMobilePosView("products");
@@ -145,12 +153,34 @@ export default function PosPage() {
 
   const cart = useCartStore();
   const { user } = useAuthStore();
+  const userId = user?.id;
   const branchId = getActiveBranchId(user);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setLinkedOrderId(params.get("orderId"));
-  }, []);
+    const saved = usePosSessionStore.getState().selectedOrder;
+    const savedOrderId = saved?.userId === userId && saved?.branchId === branchId ? saved.orderId : null;
+    setLinkedOrderId(params.get("orderId") ?? savedOrderId);
+  }, [branchId, userId]);
+
+  const rememberOrder = useCallback((orderId: string) => {
+    if (!userId) return;
+    usePosSessionStore.getState().selectOrder({ orderId, userId, branchId });
+    const url = new URL(window.location.href);
+    url.searchParams.set("orderId", orderId);
+    window.history.replaceState(null, "", url);
+  }, [branchId, userId]);
+
+  const loadPendingOrders = useCallback(() => {
+    ordersApi.getAll({ branchId }).then((orders: PendingOrder[]) => {
+      setPendingOrders(orders.filter((order) => {
+        const paid = (order.payments ?? []).filter((payment) => payment.status === "COMPLETED")
+          .reduce((total, payment) => total + Number(payment.amount), 0);
+        return !order.tableId && openOrderStatuses.includes(order.status ?? "") && Number(order.total) > paid;
+      }));
+      setPendingOrdersError(null);
+    }).catch((error) => setPendingOrdersError(getApiErrorMessage(error, "No se pudieron cargar las cuentas pendientes.")));
+  }, [branchId]);
 
   useEffect(() => {
     paymentsApi.getConfig().then((config: PaymentConfig) => {
@@ -201,26 +231,29 @@ export default function PosPage() {
   const realtimeEvents = useMemo(() => ({
     "table.updated": () => loadOperationalData(),
     "table.status.changed": () => loadOperationalData(),
-    "order.created": () => loadOperationalData(),
-    "order.updated": () => refreshCurrentOrderPayments(),
+    "order.created": () => { loadOperationalData(); loadPendingOrders(); },
+    "order.updated": () => { refreshCurrentOrderPayments(); loadPendingOrders(); },
     "order.completed": () => {
       loadOperationalData();
+      loadPendingOrders();
       refreshCurrentOrderPayments();
     },
     "order.cancelled": () => {
       loadOperationalData();
+      loadPendingOrders();
       refreshCurrentOrderPayments();
     },
-    "payment.created": () => refreshCurrentOrderPayments(),
-    "order.payment_status.changed": () => refreshCurrentOrderPayments(),
-  }), [loadOperationalData, refreshCurrentOrderPayments]);
+    "payment.created": () => { refreshCurrentOrderPayments(); loadPendingOrders(); },
+    "order.payment_status.changed": () => { refreshCurrentOrderPayments(); loadPendingOrders(); },
+  }), [loadOperationalData, loadPendingOrders, refreshCurrentOrderPayments]);
   const { status: realtimeStatus } = useRealtime(realtimeEvents);
 
   useEffect(() => {
     loadOperationalData();
-    const timer = window.setInterval(() => { loadOperationalData(); refreshCurrentOrderPayments(); }, 15000);
+    loadPendingOrders();
+    const timer = window.setInterval(() => { loadOperationalData(); loadPendingOrders(); refreshCurrentOrderPayments(); }, 15000);
     return () => window.clearInterval(timer);
-  }, [loadOperationalData, refreshCurrentOrderPayments]);
+  }, [loadOperationalData, loadPendingOrders, refreshCurrentOrderPayments]);
 
   const loadExistingOrderForPayment = useCallback((orderId: string) => {
     const version = ++orderLoadVersion.current;
@@ -233,6 +266,7 @@ export default function PosPage() {
       .then(([order, paymentInfo]) => {
         if (version !== orderLoadVersion.current) return;
         if (['COMPLETED', 'CANCELLED'].includes(order.status)) { clearClosedOrder(); setIsProcessing(false); return; }
+        rememberOrder(order.id);
         useCartStore.getState().setTableId(order.tableId ?? undefined);
         setMobilePosView("ticket");
         setCurrentOrder({
@@ -246,13 +280,13 @@ export default function PosPage() {
       })
       .catch(() => {
         if (version !== orderLoadVersion.current) return;
-        setPaymentError("No se pudo cargar el ticket de la mesa.");
+        setPaymentError("No se pudo cargar la cuenta. Intenta seleccionarla nuevamente.");
         setCurrentOrder(null);
         setPayments([]);
         setPaymentSummary(null);
       })
       .finally(() => { if (version === orderLoadVersion.current) setIsProcessing(false); });
-  }, [clearClosedOrder]);
+  }, [clearClosedOrder, rememberOrder]);
 
   useEffect(() => {
     if (!linkedOrderId) return;
@@ -346,6 +380,7 @@ export default function PosPage() {
 
   const handleTableSelection = (value: string) => {
     orderLoadVersion.current += 1;
+    usePosSessionStore.getState().clearOrder();
     setLinkedOrderId(null);
     const url = new URL(window.location.href);
     url.searchParams.delete('orderId');
@@ -400,6 +435,7 @@ export default function PosPage() {
     submission.current = null;
     const nextOrder = { id: order.id, orderNumber: order.orderNumber, status: order.status };
     setCurrentOrder(nextOrder);
+    rememberOrder(order.id);
     // These items now belong to the persisted ticket, not to pending extras.
     const selectedTableId = cart.tableId;
     cart.clearCart();
@@ -486,6 +522,7 @@ export default function PosPage() {
       loadOperationalData();
 
       clearClosedOrder();
+      loadPendingOrders();
       setLastPaidOrderId(order.id);
       setSuccessMsg(`Orden ${order.orderNumber} pagada correctamente`);
       setTimeout(() => setSuccessMsg(null), 4000);
@@ -664,6 +701,26 @@ export default function PosPage() {
                 : `Capacidad: ${selectedTable.capacity} personas`}
             </p>
           )}
+          <div className="space-y-2 border-t pt-2">
+            <label htmlFor="pending-order" className="text-sm font-medium">Cuentas pendientes sin mesa</label>
+            <Select
+              value={pendingOrders.some((order) => order.id === currentOrder?.id) ? currentOrder?.id : ""}
+              disabled={isProcessing || cart.items.length > 0}
+              onValueChange={(id) => {
+                setLinkedOrderId(null);
+                resetPaymentForm();
+                paymentAttemptId.current = null;
+                loadExistingOrderForPayment(id);
+              }}
+            >
+              <SelectTrigger id="pending-order"><SelectValue placeholder={pendingOrders.length ? "Seleccionar cuenta pendiente" : "No hay cuentas pendientes sin mesa"} /></SelectTrigger>
+              <SelectContent>
+                {pendingOrders.map((order) => <SelectItem key={order.id} value={order.id}>{order.orderNumber} · {formatCurrency(Number(order.total))}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {cart.items.length > 0 && <p className="text-xs text-muted-foreground">Termina o limpia el carrito antes de cambiar de cuenta.</p>}
+            {pendingOrdersError && <p role="alert" className="text-xs text-red-700">{pendingOrdersError}</p>}
+          </div>
         </div>
 
         {/* Cart items */}

@@ -16,7 +16,13 @@ function getWsUrl() {
   if (!value && process.env.NODE_ENV === "production") {
     throw new Error("NEXT_PUBLIC_WS_URL is required");
   }
-  return value ?? "http://localhost:3001";
+  if (value) return value.replace(/\/+$/, "");
+  if (typeof window !== "undefined") {
+    const url = new URL(window.location.origin);
+    url.port = "3001";
+    return url.origin;
+  }
+  return "http://localhost:3001";
 }
 
 export function getSocket(): Socket {

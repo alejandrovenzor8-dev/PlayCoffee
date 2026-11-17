@@ -7,7 +7,7 @@ function getApiUrl() {
   if (!value && process.env.NODE_ENV === "production") {
     throw new Error("NEXT_PUBLIC_API_URL is required");
   }
-  return value ?? "http://localhost:3001";
+  return value || "/";
 }
 
 function normalizeApiBaseUrl(url: string) {
@@ -335,7 +335,13 @@ export const cashApi = {
   detail: (id: string) => api.get(`/cash/${id}`).then((r) => r.data.data),
 };
 
+export type ChildPricing = { hourlyRate: number; extraHalfHourRate: number };
+
 export const childAccessApi = {
+  getPricing: (): Promise<ChildPricing> =>
+    api.get('/child-access/pricing').then((r) => r.data.data),
+  updatePricing: (data: ChildPricing): Promise<ChildPricing> =>
+    api.put('/child-access/pricing', data).then((r) => r.data.data),
   getActive: (branchId?: string) =>
     api
       .get("/child-access/active", { params: { branchId } })

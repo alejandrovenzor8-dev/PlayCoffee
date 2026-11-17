@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Body,
   Param,
@@ -21,6 +22,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRoleEnum } from '@prisma/client';
+import { UpdateChildPricingDto } from './dto/update-child-pricing.dto';
 
 @ApiTags('Child Access')
 @ApiBearerAuth('JWT')
@@ -28,6 +30,21 @@ import { UserRoleEnum } from '@prisma/client';
 @Controller('child-access')
 export class ChildAccessController {
   constructor(private readonly childAccessService: ChildAccessService) {}
+
+  @Get('pricing')
+  @Roles(UserRoleEnum.CASHIER)
+  getPricing(@CurrentUser('branchId') branchId?: string) {
+    return this.childAccessService.getPricing(branchId);
+  }
+
+  @Put('pricing')
+  @Roles(UserRoleEnum.ADMIN)
+  updatePricing(
+    @CurrentUser('branchId') branchId: string,
+    @Body() dto: UpdateChildPricingDto,
+  ) {
+    return this.childAccessService.updatePricing(branchId, dto);
+  }
 
   @Get('active')
   @Roles(UserRoleEnum.CASHIER, UserRoleEnum.WAITER)

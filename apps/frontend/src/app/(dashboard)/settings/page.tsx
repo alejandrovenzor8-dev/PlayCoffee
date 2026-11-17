@@ -13,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Building2, Coffee, MapPin, Clock, Bell, Shield, Save, Loader2, Printer } from "lucide-react";
-import { api, getApiErrorMessage, paymentsApi, printApi } from "@/lib/api";
+import { api, childAccessApi, getApiErrorMessage, paymentsApi, printApi } from "@/lib/api";
 import { useAuthStore } from "@/store/auth.store";
 
 export default function SettingsPage() {
@@ -22,6 +22,43 @@ export default function SettingsPage() {
   const [branchLoaded, setBranchLoaded] = useState(false);
   const [branchMessage, setBranchMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [pricing, setPricing] = useState({ hourlyRate: "", extraHalfHourRate: "" });
+  const [pricingLoaded, setPricingLoaded] = useState(false);
+  const [savingPricing, setSavingPricing] = useState(false);
+  const [pricingMessage, setPricingMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setPricingLoaded(false);
+    childAccessApi.getPricing().then((prices) => {
+      if (!active) return;
+      setPricing({ hourlyRate: String(prices.hourlyRate), extraHalfHourRate: String(prices.extraHalfHourRate) });
+      setPricingLoaded(true);
+    }).catch((error) => {
+      if (active) setPricingMessage(getApiErrorMessage(error, "No se pudieron cargar los precios."));
+    });
+    return () => { active = false; };
+  }, [branchId]);
+
+  const handlePricingSave = async () => {
+    const prices = { hourlyRate: Number(pricing.hourlyRate), extraHalfHourRate: Number(pricing.extraHalfHourRate) };
+    if (Object.values(pricing).some((value) => !/^\d+(\.\d{1,2})?$/.test(value)) ||
+        Object.values(prices).some((value) => !Number.isFinite(value) || value < 0 || value > 99999999.99)) {
+      setPricingMessage("Introduce precios válidos, mayores o iguales a cero y con hasta dos decimales.");
+      return;
+    }
+    setSavingPricing(true);
+    setPricingMessage("");
+    try {
+      const saved = await childAccessApi.updatePricing(prices);
+      setPricing({ hourlyRate: String(saved.hourlyRate), extraHalfHourRate: String(saved.extraHalfHourRate) });
+      setPricingMessage("Precios guardados. Se aplicarán a los nuevos ingresos.");
+    } catch (error) {
+      setPricingMessage(getApiErrorMessage(error, "No se pudieron guardar los precios."));
+    } finally {
+      setSavingPricing(false);
+    }
+  };
   const [printMessage, setPrintMessage] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [printers, setPrinters] = useState<Array<{ name: string; target: string }>>([]);
@@ -426,12 +463,31 @@ export default function SettingsPage() {
 
       {/* Children Tab */}
       <TabsContent value="children" className="space-y-6">
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-            Guardar cambios
-          </Button>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Precios de tiempo</CardTitle>
+            <CardDescription>Tarifas de la sucursal para nuevos ingresos. Los accesos en curso conservan sus precios originales.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="child-hourly-rate">Precio por hora</Label>
+                <Input id="child-hourly-rate" type="number" min={0} max={99999999.99} step="0.01" disabled={!pricingLoaded || savingPricing} value={pricing.hourlyRate}
+                  onChange={(e) => setPricing((prices) => ({ ...prices, hourlyRate: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="child-half-hour-rate">Precio por media hora adicional</Label>
+                <Input id="child-half-hour-rate" type="number" min={0} max={99999999.99} step="0.01" disabled={!pricingLoaded || savingPricing} value={pricing.extraHalfHourRate}
+                  onChange={(e) => setPricing((prices) => ({ ...prices, extraHalfHourRate: e.target.value }))} />
+              </div>
+            </div>
+            {pricingMessage && <p role="status" className="text-sm">{pricingMessage}</p>}
+            <Button onClick={handlePricingSave} disabled={!pricingLoaded || savingPricing}>
+              {savingPricing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Guardar precios
+            </Button>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

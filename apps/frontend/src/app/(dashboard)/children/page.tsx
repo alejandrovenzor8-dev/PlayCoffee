@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { childAccessApi, ordersApi, tablesApi, getApiErrorMessage } from "@/lib/api";
+import type { ChildPricing } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -188,6 +189,24 @@ export default function ChildrenPage() {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [editingRecord, setEditingRecord] = useState<ChildRecord | null>(null);
+  const [pricing, setPricing] = useState<ChildPricing | null>(null);
+  const displayPricing = editingRecord ? {
+    hourlyRate: Number(editingRecord.hourlyRate ?? 99),
+    extraHalfHourRate: Number(editingRecord.extraHalfHourRate ?? 49),
+  } : pricing;
+
+  useEffect(() => {
+    if (!registerOpen || editingRecord) return;
+    let active = true;
+    setPricing(null);
+    setRegisterError(null);
+    childAccessApi.getPricing().then((prices) => {
+      if (active) setPricing(prices);
+    }).catch((error) => {
+      if (active) setRegisterError(getApiErrorMessage(error, "No se pudieron cargar los precios. Cierra e intenta de nuevo."));
+    });
+    return () => { active = false; };
+  }, [registerOpen, editingRecord, branchId]);
   const [checkoutRecord, setCheckoutRecord] = useState<ChildRecord | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState<any | null>(null);
@@ -271,7 +290,7 @@ export default function ChildrenPage() {
   const warningCount = liveRecords.filter((record) => record.runtimeStatus === "WARNING" || record.runtimeStatus === "GRACE").length;
 
   const handleRegister = async () => {
-    if (checkinBusy.current) return;
+    if (checkinBusy.current || !displayPricing) return;
     checkinBusy.current = true;
     setIsSubmitting(true);
     setRegisterError(null);
@@ -460,8 +479,8 @@ export default function ChildrenPage() {
               <div className="space-y-1.5"><Label>Teléfono</Label><Input value={form.guardianPhone} onChange={(e) => setForm((p) => ({ ...p, guardianPhone: e.target.value }))} /></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label>Tiempo contratado</Label><Select value={form.contractedMinutes} onValueChange={(value) => setForm((p) => ({ ...p, contractedMinutes: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[60,90,120,150,180,210,240].map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{minutes === 60 ? "1 hora · $99" : `${minutes} min · $${99 + ((minutes - 60) / 30) * 49}`}</SelectItem>)}</SelectContent></Select></div>
-              <div className="rounded-lg border bg-muted p-3 text-sm"><p className="font-medium">Tarifa fija</p><p className="text-muted-foreground">1 hora $99 · cada 30 min adicionales $49</p><p className="mt-1 text-xs">Segundo hermano y siguientes: 15% de descuento.</p></div>
+              <div className="space-y-1.5"><Label>Tiempo contratado</Label><Select disabled={!displayPricing} value={form.contractedMinutes} onValueChange={(value) => setForm((p) => ({ ...p, contractedMinutes: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[60,90,120,150,180,210,240].map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{minutes === 60 ? "1 hora" : `${minutes} min`}{displayPricing && ` · ${formatCurrency(displayPricing.hourlyRate + ((minutes - 60) / 30) * displayPricing.extraHalfHourRate)}`}</SelectItem>)}</SelectContent></Select></div>
+              <div className="rounded-lg border bg-muted p-3 text-sm"><p className="font-medium">{editingRecord ? "Tarifa del ingreso" : "Tarifas vigentes"}</p><p className="text-muted-foreground">{displayPricing ? `1 hora ${formatCurrency(displayPricing.hourlyRate)} · cada 30 min adicionales ${formatCurrency(displayPricing.extraHalfHourRate)}` : "Cargando precios…"}</p><p className="mt-1 text-xs">Segundo hermano y siguientes: 15% de descuento.</p></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -499,7 +518,7 @@ export default function ChildrenPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRegisterOpen(false)}>Cancelar</Button>
-            <Button onClick={handleRegister} disabled={!form.childName || !form.guardianName || (!editingRecord && form.orderMode === "existing" && !form.orderId) || (!editingRecord && form.orderMode === "table" && !form.tableId) || isSubmitting}>
+            <Button onClick={handleRegister} disabled={!displayPricing || !form.childName || !form.guardianName || (!editingRecord && form.orderMode === "existing" && !form.orderId) || (!editingRecord && form.orderMode === "table" && !form.tableId) || isSubmitting}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {editingRecord ? "Guardar corrección" : "Registrar"}
             </Button>
