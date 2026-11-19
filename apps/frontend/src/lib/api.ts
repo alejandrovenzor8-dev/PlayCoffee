@@ -1,20 +1,13 @@
 import type { CashierPrintPolicy, PrintTicketDocument } from '@/types/print.types';
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/store/auth.store";
+import { resolveApiOrigin } from "@/lib/connection-origin";
 
 function getApiUrl() {
-  const value = process.env.NEXT_PUBLIC_API_URL;
-  if (!value && process.env.NODE_ENV === "production") {
-    throw new Error("NEXT_PUBLIC_API_URL is required");
-  }
-  return value || "/";
+  return resolveApiOrigin(process.env.NEXT_PUBLIC_API_URL,
+    typeof window !== "undefined" ? window.location.origin : undefined);
 }
-
-function normalizeApiBaseUrl(url: string) {
-  return url.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
-}
-
-const BASE_URL = normalizeApiBaseUrl(getApiUrl());
+const BASE_URL = getApiUrl();
 let refreshPromise: Promise<string | null> | null = null;
 
 export function getApiOrigin() {
@@ -215,6 +208,8 @@ export const ordersApi = {
   correctItem: (id: string, itemId: string, data: { quantity: number; notes?: string; reason: string }) =>
     api.patch(`/orders/${id}/items/${itemId}`, data).then(r => r.data.data),
   cancel: (id: string) => api.delete(`/orders/${id}`),
+  cancelUnpaid: (id: string, reason: string) =>
+    api.post(`/orders/${id}/cancel-unpaid`, { confirmed: true, reason }).then((r) => r.data.data),
   getDailySummary: (branchId: string, date?: string) =>
     api
       .get("/orders/summary", { params: { branchId, date } })
@@ -396,6 +391,8 @@ export const partyPackagesApi = {
 };
 
 export const reportsApi = {
+  orders: (params: { start: string; end: string; branchId?: string }) =>
+    api.get('/reports/orders', { params }).then((r) => r.data.data),
   getKpis: (branchId: string) =>
     api.get("/reports/kpis", { params: { branchId } }).then((r) => r.data.data),
   getSales: (branchId: string, from: string, to: string) =>

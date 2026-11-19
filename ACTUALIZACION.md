@@ -1,4 +1,41 @@
-# Actualizacion de PlayCoffee: comandas, mesas y caja
+# Actualizacion de PlayCoffee
+
+## Correccion de conexion en celulares HTTPS
+
+El paquete Conexion-Celulares incluye las tres mejoras de Cuentas-Reportes-Correcciones y corrige la eleccion de direcciones en instalaciones locales. Cuando se abre https://IP-DEL-SERVIDOR:3443, la API, el control de salud y el tiempo real usan esa misma direccion y puerto, aunque NEXT_PUBLIC_API_URL o NEXT_PUBLIC_WS_URL hayan quedado compiladas con una IP anterior o con http. No se cambia la IP de Windows, no se desactiva la validacion de certificados ni se modifican datos de la base.
+
+Las instalaciones de nube con frontend y API separados conservan sus direcciones configuradas. Para desarrollo o instalaciones antiguas en HTTP, la API pasa por el frontend y el tiempo real conecta al backend local.
+
+Se actualiza la version de cache de la aplicacion para retirar recursos anteriores. Al terminar ACTUALIZAR.cmd y confirmar que no hay operaciones pendientes, recarga cada celular en la direccion HTTPS correcta. Si usas un acceso instalado, abre tambien esa direccion en Safari o Chrome y vuelve a entrar. No es necesario reinstalar PostgreSQL ni restablecer la base de datos.
+
+Verificacion de esta correccion: cinco pruebas de direcciones, compilacion de produccion y prueba en navegador con IP antigua configurada. La prueba simula https://192.168.1.80:3443, verifica inicio de sesion, consulta de cuentas, /health y wss en el puerto 3443, sin contactar al equipo del cliente. La comprobacion final debe realizarse en los celulares de la sucursal despues de instalar.
+
+## Nueva actualizacion Cuentas Reportes Correcciones
+
+Paquete del 18 de noviembre de 2026 que agrega tres funciones:
+
+1. En Caja / POS, selecciona una cuenta pendiente sin mesa y pulsa **Borrar cuenta sin mesa**. Revisa el numero, escribe el motivo y pulsa **Confirmar borrado**. La cuenta queda cancelada, deja de aparecer entre pendientes y conserva su historial. No se permiten cuentas con pagos registrados o en proceso, accesos infantiles sin finalizar ni envios de comanda en proceso.
+2. En Reportes aparece **Comandas del periodo**, con todas las cuentas creadas dentro de las fechas Desde y Hasta, incluidos ambos dias segun la zona horaria de la sucursal. Incluye pendientes, pagadas y canceladas, productos, mesa, responsable, total, pagado y saldo. Permite exportar las comandas a CSV. Las canceladas se identifican con su estado y no tienen saldo por cobrar.
+3. En Caja / POS se muestran los **Productos de la cuenta**, tambien dentro de la pantalla de cobro. Usa **Corregir**, ajusta la cantidad (0 elimina el producto), escribe el motivo y guarda. Se recalcula el total y se conserva la linea original como cancelada. Solo se permite antes de recibir pagos; los cargos infantiles se corrigen desde Control Infantil. Si ya se envio un producto a preparacion, se genera un aviso de cancelacion a su estacion y se conserva el historial del envio.
+
+Estas funciones no requieren nuevas migraciones. Si vienes de una version antigua, el actualizador aplica las migraciones pendientes que ya formen parte del paquete. No borres carpetas ni reinstales PostgreSQL para actualizar.
+
+Pruebas de esta version: 33 comprobaciones de backend, recorrido de navegador con operaciones simuladas y consulta de fechas en PostgreSQL local. La revision fisica de las impresoras de la sucursal sigue pendiente y debe realizarse antes de usar las cancelaciones de productos enviados durante el servicio.
+
+## Paquete del 18 de noviembre de 2026
+
+Esta actualizacion incluye los cambios actuales del sistema:
+
+- Edicion de precio por hora y media hora adicional en Configuracion > Control Infantil, con el boton Guardar precios. Los ingresos en curso conservan sus tarifas originales.
+- Recuperacion de la cuenta seleccionada al salir del POS para abrir caja y regresar.
+- Selector Cuentas pendientes sin mesa para retomar cuentas infantiles y otras ventas abiertas sin mesa.
+- Conexion local sin depender de una IP antigua en la configuracion de desarrollo.
+- Migraciones pendientes de la base de datos, aplicadas por el proceso de arranque despues del respaldo.
+- Manual de usuario en PDF y Word editable dentro de docs\manual-usuario.
+
+No vuelvas a instalar el sistema para aplicar estas mejoras. Usa ACTUALIZAR.cmd desde la carpeta extraida de este paquete.
+
+## Alcance del paquete
 
 Paquete para una instalacion existente del servidor Windows. Incluye comandas incrementales, correcciones autorizadas, reutilizacion de mesas y el flujo de tres impresoras con precuenta y copia del negocio.
 

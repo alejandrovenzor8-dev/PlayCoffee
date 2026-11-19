@@ -15,6 +15,74 @@ type Range = { start: Date; end: Date };
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
+  async orderList(branchId: string | undefined, start: string, end: string) {
+    if (!branchId) throw new BadRequestException('branchId is required');
+    const validDate = (value: string) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(value ?? '') &&
+      !Number.isNaN(Date.parse(value)) &&
+      new Date(value).toISOString().slice(0, 10) === value;
+    if (!validDate(start) || !validDate(end) || start > end)
+      throw new BadRequestException('Selecciona un rango de fechas válido.');
+    const branch = await this.prisma.branch.findUnique({
+      where: { id: branchId },
+      select: { timezone: true },
+    });
+    if (!branch) throw new BadRequestException('Sucursal no encontrada.');
+    // Dates refer to creation in the branch's local day, including both boundary days.
+    const ids = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM orders
+      WHERE "branchId" = ${branchId} AND "deletedAt" IS NULL
+      AND ("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${branch.timezone})::date
+        BETWEEN ${start}::date AND ${end}::date
+    `;
+    const orders = await this.prisma.order.findMany({
+      where: { branchId, deletedAt: null, id: { in: ids.map(({ id }) => id) } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        table: { select: { number: true } },
+        user: { select: { firstName: true, lastName: true } },
+        payments: true,
+        items: {
+          include: { product: { select: { name: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    return {
+      timezone: branch.timezone,
+      orders: orders.map((order) => {
+        const totalPaid = order.payments
+          .filter((payment) => payment.status === PaymentStatus.COMPLETED)
+          .reduce((sum, payment) => sum + Number(payment.amount), 0);
+        return {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          createdAt: order.createdAt,
+          status: order.status,
+          table: order.table?.number ?? null,
+          responsible: `${order.user.firstName} ${order.user.lastName}`,
+          total: Number(order.total),
+          totalPaid: Math.round(totalPaid * 100) / 100,
+          remainingAmount:
+            order.status === OrderStatus.CANCELLED
+              ? 0
+              : Math.max(
+                  0,
+                  Math.round((Number(order.total) - totalPaid) * 100) / 100,
+                ),
+          items: order.items.map((item) => ({
+            id: item.id,
+            name: item.product.name,
+            quantity: item.quantity,
+            totalPrice: Number(item.totalPrice),
+            status: item.status,
+            notes: item.notes,
+          })),
+        };
+      }),
+    };
+  }
+
   async getSummary(branchId?: string, start?: string, end?: string) {
     const range = this.getRange(start, end);
     const [

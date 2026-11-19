@@ -15,6 +15,16 @@ import { UserRoleEnum } from '@prisma/client';
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
+  @Get('orders')
+  getOrders(
+    @Query('start') start: string,
+    @Query('end') end: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser('branchId') userBranchId?: string,
+  ) {
+    return this.reportsService.orderList(userBranchId ?? branchId, start, end);
+  }
+
   @Get('summary')
   @ApiQuery({ name: 'start', required: false })
   @ApiQuery({ name: 'end', required: false })

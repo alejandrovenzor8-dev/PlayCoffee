@@ -1,4 +1,4 @@
-const CACHE_VERSION = "playcoffee-shell-v4";
+const CACHE_VERSION = "playcoffee-shell-v5";
 const APP_SHELL = [
   "/",
   "/login",

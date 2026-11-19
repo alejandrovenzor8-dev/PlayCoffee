@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { reportsApi } from "@/lib/api";
 import { getActiveBranchId } from "@/lib/branch";
 import { useAuthStore } from "@/store/auth.store";
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Area,
   AreaChart,
@@ -58,6 +60,15 @@ type ChildAccessReport = { active: number; completed: number; overtime: number; 
 type ReservationsReport = { total: number; pending: number; confirmed: number; cancelled: number; completed: number; deposits: number; pendingBalance: number };
 type LowStock = { id: string; name: string; sku?: string | null; currentStock: number; minStock: number; unit: string };
 type CashShift = { id: string; closedAt?: string; cashier: string; expectedCash: number; closingBalance: number; cashDifference: number; totalSales: number };
+type ReportOrder = {
+  id: string; orderNumber: string; createdAt: string; status: string; table: string | null; responsible: string;
+  total: number; totalPaid: number; remainingAmount: number;
+  items: Array<{ id: string; name: string; quantity: number; totalPrice: number; status: string; notes?: string | null }>;
+};
+const orderStatuses: Record<string, string> = { PENDING: "Pendiente", CONFIRMED: "Confirmada", PREPARING: "Preparando", READY: "Lista", DELIVERED: "Entregada", COMPLETED: "Pagada", CANCELLED: "Cancelada" };
+function dateInputValue(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 const COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6", "#64748b"];
 
@@ -131,18 +142,22 @@ export default function ReportsPage() {
   const [reservations, setReservations] = useState<ReservationsReport | null>(null);
   const [lowStock, setLowStock] = useState<LowStock[]>([]);
   const [cashShifts, setCashShifts] = useState<CashShift[]>([]);
+  const [orderReport, setOrderReport] = useState<{ timezone: string; orders: ReportOrder[] }>({ timezone: "America/Mexico_City", orders: [] });
+  const [loadedPeriod, setLoadedPeriod] = useState({ start: "", end: "" });
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() - 7);
-    return date.toISOString().slice(0, 10);
+    return dateInputValue(date);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateTo, setDateTo] = useState(() => dateInputValue(new Date()));
+  const reportVersion = useRef(0);
 
   const params = useMemo(() => ({ branchId, start: dateFrom, end: dateTo }), [branchId, dateFrom, dateTo]);
 
   const loadReport = useCallback(() => {
+    const version = ++reportVersion.current;
     setIsLoading(true);
     setLoadError(null);
     Promise.all([
@@ -156,8 +171,10 @@ export default function ReportsPage() {
       reportsApi.reservations(params),
       reportsApi.inventoryLowStock(branchId),
       reportsApi.cashShifts(params),
+      reportsApi.orders(params),
     ])
-      .then(([summaryData, dayData, categoryData, methodData, hourData, waiterData, childData, reservationData, stockData, shiftData]) => {
+      .then(([summaryData, dayData, categoryData, methodData, hourData, waiterData, childData, reservationData, stockData, shiftData, orderData]) => {
+        if (version !== reportVersion.current) return;
         setSummary(summaryData);
         setSalesByDay(dayData);
         setByCategory(categoryData);
@@ -168,11 +185,14 @@ export default function ReportsPage() {
         setReservations(reservationData);
         setLowStock(stockData);
         setCashShifts(shiftData);
+        setOrderReport(orderData);
+        setLoadedPeriod({ start: params.start, end: params.end });
       })
       .catch(() => {
+        if (version !== reportVersion.current) return;
         setLoadError("No se pudieron cargar los reportes. Verifica permisos y API.");
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => { if (version === reportVersion.current) setIsLoading(false); });
   }, [branchId, params]);
 
   useEffect(() => {
@@ -226,6 +246,29 @@ export default function ReportsPage() {
         <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
       ) : (
         <>
+          <Card>
+            <CardHeader className="gap-2">
+              <CardTitle>Comandas del periodo</CardTitle>
+              <p className="text-sm text-muted-foreground">{loadedPeriod.start} al {loadedPeriod.end} · {orderReport.orders.length} comandas · Fecha de creación en {orderReport.timezone}. Incluye pendientes, pagadas y canceladas.</p>
+              <Button variant="outline" size="sm" className="w-fit" disabled={!orderReport.orders.length} onClick={() => downloadCsv(`playcoffee-comandas-${loadedPeriod.start}-${loadedPeriod.end}.csv`, orderReport.orders.map((order) => ({
+                Cuenta: order.orderNumber, Fecha: new Date(order.createdAt).toLocaleString("es-MX", { timeZone: orderReport.timezone }), Mesa: order.table ?? "Sin mesa",
+                Responsable: order.responsible, Estado: orderStatuses[order.status] ?? order.status, Total: order.total, Pagado: order.totalPaid, Saldo: order.remainingAmount,
+                Productos: order.items.map((item) => `${item.quantity} x ${item.name}${item.status === "CANCELLED" ? " (retirado)" : ""}`).join("; "),
+              })))}><Download className="mr-2 h-4 w-4" />Exportar comandas CSV</Button>
+            </CardHeader>
+            <CardContent>
+              {orderReport.orders.length === 0 ? <p className="text-sm text-muted-foreground">No hay comandas creadas en las fechas seleccionadas.</p> : <Table>
+                <TableHeader><TableRow><TableHead>Cuenta y fecha</TableHead><TableHead>Mesa y responsable</TableHead><TableHead>Estado</TableHead><TableHead>Productos</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Pagado</TableHead><TableHead className="text-right">Saldo</TableHead></TableRow></TableHeader>
+                <TableBody>{orderReport.orders.map((order) => <TableRow key={order.id}>
+                  <TableCell><p className="font-medium">{order.orderNumber}</p><p className="text-xs text-muted-foreground">{new Date(order.createdAt).toLocaleString("es-MX", { timeZone: orderReport.timezone })}</p></TableCell>
+                  <TableCell><p>{order.table ? `Mesa ${order.table}` : "Sin mesa"}</p><p className="text-xs text-muted-foreground">{order.responsible}</p></TableCell>
+                  <TableCell><Badge variant={order.status === "CANCELLED" ? "destructive" : "secondary"}>{orderStatuses[order.status] ?? order.status}</Badge></TableCell>
+                  <TableCell><details><summary className="cursor-pointer">Ver productos</summary><ul className="mt-2 min-w-48 space-y-1 text-xs">{order.items.map((item) => <li key={item.id} className={item.status === "CANCELLED" ? "text-muted-foreground line-through" : ""}>{item.quantity} × {item.name} · {formatCurrency(item.totalPrice)}{item.status === "CANCELLED" ? " (retirado)" : ""}{item.notes && <p>{item.notes}</p>}</li>)}</ul></details></TableCell>
+                  <TableCell className="text-right">{formatCurrency(order.total)}</TableCell><TableCell className="text-right">{formatCurrency(order.totalPaid)}</TableCell><TableCell className="text-right">{formatCurrency(order.remainingAmount)}</TableCell>
+                </TableRow>)}</TableBody>
+              </Table>}
+            </CardContent>
+          </Card>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <KpiCard title="Ventas" value={summary?.totalSales ?? 0} icon={DollarSign} format="currency" />
             <KpiCard title="Tickets pagados" value={summary?.paidOrders ?? 0} icon={Receipt} />

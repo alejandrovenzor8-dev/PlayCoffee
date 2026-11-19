@@ -16,7 +16,7 @@ import { useAuthStore } from "@/store/auth.store";
 import { formatCurrency } from "@/lib/utils";
 import { createPaymentAttemptId } from "@/lib/payment-id";
 import type { Product, Category } from "@/types/pos.types";
-import type { RestaurantTable } from "@/types/orders.types";
+import type { OrderItem, RestaurantTable } from "@/types/orders.types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   ShoppingCart, Trash2, Plus, Minus, Search, CreditCard, Banknote, X, Loader2, Table2,
@@ -56,6 +56,8 @@ type PosOrder = {
   orderNumber: string;
   total?: number;
   status?: string;
+  tableId?: string | null;
+  items?: OrderItem[];
 };
 type PendingOrder = PosOrder & {
   tableId?: string | null;
@@ -110,6 +112,10 @@ export default function PosPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linkedOrderId, setLinkedOrderId] = useState<string | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [correction, setCorrection] = useState<{ item: OrderItem; quantity: string; reason: string } | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig>({
     tipEnabled: true,
     defaultTipPercentage: 10,
@@ -135,6 +141,8 @@ export default function PosPage() {
     usePosSessionStore.getState().clearOrder();
     useCartStore.getState().clearCart();
     setCurrentOrder(null);
+    setCancelOpen(false);
+    setCorrection(null);
     setMobilePosView("products");
     setLinkedOrderId(null);
     setPayments([]);
@@ -214,14 +222,15 @@ export default function PosPage() {
   const refreshCurrentOrderPayments = useCallback(() => {
     if (!currentOrderId) return;
     const id = currentOrderId;
+    const version = orderLoadVersion.current;
     Promise.all([ordersApi.getOne(id), paymentsApi.getByOrder(id)])
       .then(([order, paymentInfo]) => {
-        if (activeOrderId.current !== id) return;
+        if (activeOrderId.current !== id || version !== orderLoadVersion.current || mutationBusy.current) return;
         if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
           clearClosedOrder();
           return;
         }
-        setCurrentOrder({ id: order.id, orderNumber: order.orderNumber, total: Number(order.total), status: order.status });
+        setCurrentOrder({ id: order.id, orderNumber: order.orderNumber, total: Number(order.total), status: order.status, tableId: order.tableId, items: order.items });
         setPayments(paymentInfo.payments ?? []);
         setPaymentSummary(paymentInfo.summary);
       })
@@ -274,6 +283,8 @@ export default function PosPage() {
           orderNumber: order.orderNumber,
           total: Number(order.total),
           status: order.status,
+          tableId: order.tableId,
+          items: order.items,
         });
         setPayments(paymentInfo.payments ?? []);
         setPaymentSummary(paymentInfo.summary);
@@ -356,6 +367,8 @@ export default function PosPage() {
         orderNumber: updatedOrder.orderNumber,
         total: Number(updatedOrder.total),
         status: updatedOrder.status,
+        tableId: updatedOrder.tableId,
+        items: updatedOrder.items,
       });
       setPayments(paymentInfo.payments ?? []);
       setPaymentSummary(paymentInfo.summary);
@@ -433,7 +446,7 @@ export default function PosPage() {
 
     const order = await ordersApi.create({ ...orderData, requestId: requestIdFor(orderData) });
     submission.current = null;
-    const nextOrder = { id: order.id, orderNumber: order.orderNumber, status: order.status };
+    const nextOrder = { id: order.id, orderNumber: order.orderNumber, status: order.status, tableId: order.tableId, items: order.items };
     setCurrentOrder(nextOrder);
     rememberOrder(order.id);
     // These items now belong to the persisted ticket, not to pending extras.
@@ -550,6 +563,58 @@ export default function PosPage() {
       setIsProcessing(false);
     }
   };
+
+  const editOrder = async () => {
+    if (!currentOrder || mutationBusy.current) return;
+    mutationBusy.current = true;
+    orderLoadVersion.current += 1;
+    setIsProcessing(true);
+    setEditError(null);
+    try {
+      if (cancelOpen) {
+        await ordersApi.cancelUnpaid(currentOrder.id, cancelReason.trim());
+        clearClosedOrder();
+        setCancelOpen(false);
+        setSuccessMsg("Cuenta cancelada y retirada de pendientes. Su historial se conserva.");
+      } else if (correction) {
+        const order = await ordersApi.correctItem(currentOrder.id, correction.item.id, {
+          quantity: Number(correction.quantity), notes: correction.item.notes, reason: correction.reason.trim(),
+        });
+        setCurrentOrder({ ...order, total: Number(order.total) });
+        setPaymentSummary({ orderId: order.id, total: Number(order.total), totalPaid: 0, remainingAmount: Number(order.total), changeAmount: 0, paymentStatus: "UNPAID" });
+        setPayments([]);
+        resetPaymentForm();
+        paymentAttemptId.current = null;
+        setCorrection(null);
+        setSuccessMsg("Comanda corregida. Revisa el nuevo total antes de cobrar.");
+      }
+      loadPendingOrders();
+      loadOperationalData();
+    } catch (error) {
+      setEditError(getApiErrorMessage(error, "No se pudo modificar la cuenta."));
+    } finally {
+      mutationBusy.current = false;
+      setIsProcessing(false);
+    }
+  };
+
+  const openCorrection = (item: OrderItem) => {
+    setPaymentOpen(false);
+    setEditError(null);
+    setCorrection({ item, quantity: String(item.quantity), reason: "" });
+  };
+
+  const orderLines = currentOrder?.items?.filter((item) => item.status !== "CANCELLED") ?? [];
+  const savedOrderItems = orderLines.length > 0 && (
+    <div className="space-y-2">
+      <p className="text-sm font-semibold">Productos de la cuenta</p>
+      {orderLines.map((item) => <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border bg-background p-2 text-sm">
+        <div><p>{item.quantity} × {item.product.name}</p><p className="text-muted-foreground">{formatCurrency(Number(item.totalPrice))}</p></div>
+        <Button size="sm" variant="outline" disabled={isProcessing || payments.length > 0 || cart.items.length > 0} onClick={() => openCorrection(item)}>Corregir</Button>
+      </div>)}
+      {payments.length > 0 && <p className="text-xs text-muted-foreground">La cuenta tiene pagos registrados y no permite cambiar productos.</p>}
+    </div>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 lg:flex-row lg:gap-4">
@@ -720,6 +785,7 @@ export default function PosPage() {
             </Select>
             {cart.items.length > 0 && <p className="text-xs text-muted-foreground">Termina o limpia el carrito antes de cambiar de cuenta.</p>}
             {pendingOrdersError && <p role="alert" className="text-xs text-red-700">{pendingOrdersError}</p>}
+            {currentOrder && !currentOrder.tableId && <Button variant="outline" size="sm" className="w-full text-red-700" disabled={isProcessing || cart.items.length > 0 || payments.length > 0} onClick={() => { setCancelReason(""); setEditError(null); setCancelOpen(true); }}>Borrar cuenta sin mesa</Button>}
           </div>
         </div>
 
@@ -732,6 +798,7 @@ export default function PosPage() {
               <p className="mt-2 text-xs text-blue-700">
                 Total pendiente: {formatCurrency(remainingAmount)}
               </p>
+              <div className="mt-3">{savedOrderItems}</div>
             </div>
           ) : cart.items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-12 text-center text-muted-foreground">
@@ -845,6 +912,7 @@ export default function PosPage() {
             <DialogTitle>Pagos del ticket</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {savedOrderItems}
             <div className="rounded-lg bg-muted p-4 text-center">
               <p className="text-sm text-muted-foreground">Total a cobrar</p>
               <p className="text-4xl font-bold mt-1 text-blue-600">{formatCurrency(payableTotal)}</p>
@@ -1023,6 +1091,22 @@ export default function PosPage() {
                 <>Agregar Pago</>
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={cancelOpen || correction !== null} onOpenChange={(open) => { if (!open && !isProcessing) { setCancelOpen(false); setCorrection(null); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{cancelOpen ? "Confirmar borrado de cuenta sin mesa" : `Corregir ${correction?.item.product.name ?? "producto"}`}</DialogTitle><DialogDescription>Revisa la cuenta e indica el motivo antes de confirmar el cambio.</DialogDescription></DialogHeader>
+          <p className="text-sm font-medium">Cuenta {currentOrder?.orderNumber} · {formatCurrency(Number(currentOrder?.total ?? 0))}</p>
+          {cancelOpen ? <p className="text-sm">Esta cuenta dejará de aparecer en pendientes y no se cobrará. Quedará cancelada en el historial. No se pueden borrar cuentas con pagos o niños activos.</p> : <>
+            <p className="text-sm">Usa cantidad 0 para eliminar el producto. Si ya se envió a cocina o barra, se generará un aviso de cancelación. Los cargos infantiles se corrigen desde Control Infantil.</p>
+            <label className="space-y-1 text-sm">Cantidad<Input type="number" min={0} step={1} value={correction?.quantity ?? ""} disabled={isProcessing} onChange={(event) => setCorrection((value) => value && ({ ...value, quantity: event.target.value }))} /></label>
+          </>}
+          <label className="space-y-1 text-sm">Motivo obligatorio<Input value={cancelOpen ? cancelReason : correction?.reason ?? ""} disabled={isProcessing} onChange={(event) => cancelOpen ? setCancelReason(event.target.value) : setCorrection((value) => value && ({ ...value, reason: event.target.value }))} /></label>
+          {editError && <p role="alert" className="text-sm text-red-700">{editError}</p>}
+          <DialogFooter>
+            <Button variant="outline" disabled={isProcessing} onClick={() => { setCancelOpen(false); setCorrection(null); }}>Volver</Button>
+            <Button variant={cancelOpen ? "destructive" : "default"} disabled={isProcessing || (cancelOpen ? cancelReason.trim().length < 3 : !correction || correction.reason.trim().length < 3 || correction.quantity.trim() === "" || !Number.isInteger(Number(correction.quantity)) || Number(correction.quantity) < 0)} onClick={editOrder}>{isProcessing ? "Guardando…" : cancelOpen ? "Confirmar borrado" : "Guardar corrección"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

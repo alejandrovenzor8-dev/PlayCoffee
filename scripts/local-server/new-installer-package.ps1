@@ -18,7 +18,7 @@ if (-not $staging.StartsWith($output + '\', [StringComparison]::OrdinalIgnoreCas
 if ((Test-Path -LiteralPath $staging) -or (Test-Path -LiteralPath $zip)) { throw 'Ya existe un paquete con esta version.' }
 New-Item -ItemType Directory -Force -Path $package | Out-Null
 try {
-    $rootFiles = @('ACTUALIZAR.cmd', 'ACTUALIZACION.md', 'DIAGNOSTICO-PRODUCCION.md', 'GUIA-TRES-IMPRESORAS.md', 'SERVIDOR-LOCAL-WINDOWS.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'turbo.json')
+    $rootFiles = @('ACTUALIZAR.cmd', 'DIAGNOSTICAR-CONEXION.cmd', 'ACTUALIZACION.md', 'DIAGNOSTICO-PRODUCCION.md', 'GUIA-TRES-IMPRESORAS.md', 'SERVIDOR-LOCAL-WINDOWS.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'turbo.json')
     if (-not $UpdateOnly) { $rootFiles += @('INSTALAR.cmd', 'INSTALACION-EQUIPO-NUEVO.md') }
     foreach ($name in $rootFiles) {
         Copy-Item -LiteralPath (Join-Path $root $name) -Destination (Join-Path $package $name)
@@ -26,6 +26,17 @@ try {
     foreach ($directory in @('apps', 'packages', 'scripts')) {
         & robocopy.exe (Join-Path $root $directory) (Join-Path $package $directory) /E /NFL /NDL /NJH /NJS /NP /XD node_modules .next dist coverage .turbo .playwright-cli .git /XF '.env*' 'server*.env' '*.log' '*.dump' '*.pfx' '*.key' '*.pem' '*.tsbuildinfo' '*.pid' 'tsconfig.build.tsbuildinfo'
         if ($LASTEXITCODE -ge 8) { throw "No se pudo copiar $directory." }
+    }
+    $manualSource = Join-Path $root 'docs\manual-usuario'
+    if (Test-Path -LiteralPath $manualSource -PathType Container) {
+        $manualTarget = Join-Path $package 'docs\manual-usuario'
+        New-Item -ItemType Directory -Force -Path $manualTarget | Out-Null
+        foreach ($name in @('Manual_de_usuario_PlayCoffee.pdf', 'Manual_de_usuario_PlayCoffee.docx', 'Manual_de_usuario_PlayCoffee.md')) {
+            $manualFile = Join-Path $manualSource $name
+            if (Test-Path -LiteralPath $manualFile -PathType Leaf) {
+                Copy-Item -LiteralPath $manualFile -Destination (Join-Path $manualTarget $name)
+            }
+        }
     }
     if ($PrerequisiteDirectory) {
         $prerequisites = @{

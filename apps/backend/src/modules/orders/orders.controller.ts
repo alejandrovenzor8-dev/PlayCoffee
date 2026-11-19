@@ -1,4 +1,5 @@
 import { CorrectOrderItemDto } from './dto/correct-order-item.dto';
+import { CancelUnpaidOrderDto } from './dto/cancel-unpaid-order.dto';
 import {
   Controller,
   Get,
@@ -188,5 +189,26 @@ export class OrdersController {
       id: order.id,
       status: order.status,
     });
+  }
+
+  @Post(':id/cancel-unpaid')
+  @Roles(UserRoleEnum.CASHIER)
+  async cancelUnpaid(
+    @Param('id') id: string,
+    @Body() dto: CancelUnpaidOrderDto,
+    @CurrentUser('branchId') branchId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    const order = await this.ordersService.cancelUnpaid(
+      id,
+      dto,
+      branchId,
+      userId,
+    );
+    this.realtime.emitOrderEvent(branchId, 'order.cancelled', {
+      id,
+      status: order.status,
+    });
+    return order;
   }
 }

@@ -1,5 +1,6 @@
 import { isTransactionConflict } from '../../common/transaction-conflict';
 import { CorrectOrderItemDto } from './dto/correct-order-item.dto';
+import { CancelUnpaidOrderDto } from './dto/cancel-unpaid-order.dto';
 import {
   BadRequestException,
   ConflictException,
@@ -687,6 +688,98 @@ export class OrdersService {
       branchId,
       userId,
     );
+  }
+
+  async cancelUnpaid(
+    id: string,
+    dto: CancelUnpaidOrderDto,
+    branchId: string,
+    userId: string,
+  ) {
+    if (
+      !branchId ||
+      !userId ||
+      dto.confirmed !== true ||
+      dto.reason.trim().length < 3
+    )
+      throw new BadRequestException(
+        'Confirma la cancelación e indica un motivo.',
+      );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} AND "branchId" = ${branchId} FOR UPDATE`;
+      const order = await tx.order.findFirst({
+        where: { id, branchId, deletedAt: null },
+        include: this.orderInclude(),
+      });
+      if (!order) throw new NotFoundException('Cuenta no encontrada.');
+      if (order.tableId)
+        throw new ConflictException(
+          'Esta opción es solo para cuentas sin mesa.',
+        );
+      if (
+        ['COMPLETED', 'CANCELLED'].includes(order.status) ||
+        order.inventoryDiscountedAt
+      )
+        throw new ConflictException(
+          'La cuenta ya está cerrada o tiene inventario descontado.',
+        );
+      if (order.payments.some((payment) => payment.status !== 'FAILED'))
+        throw new ConflictException(
+          'La cuenta tiene pagos registrados o en proceso y no se puede borrar.',
+        );
+      if (
+        await tx.childAccess.count({ where: { orderId: id, exitTime: null } })
+      )
+        throw new ConflictException(
+          'Finaliza los accesos infantiles de esta cuenta antes de cancelarla.',
+        );
+      for (const item of order.items) {
+        if (
+          !['QUEUED', 'SENT'].includes(item.preparationStatus) &&
+          !(
+            item.preparationStatus === 'LEGACY' &&
+            item.product.preparationStation !== 'NONE'
+          )
+        )
+          continue;
+        const job = item.preparationJobId
+          ? await tx.printJob.findUnique({
+              where: { id: item.preparationJobId },
+            })
+          : null;
+        if (job && ['PENDING', 'PROCESSING'].includes(job.status))
+          throw new ConflictException(
+            'Espera a que termine el envío de la comanda antes de cancelar.',
+          );
+        await this.printService.queueCancellation(
+          tx,
+          id,
+          branchId,
+          item.id,
+          dto.reason.trim(),
+        );
+      }
+      const cancelled = await tx.order.update({
+        where: { id },
+        data: { status: OrderStatus.CANCELLED, cancelledAt: new Date() },
+      });
+      await tx.auditLog.create({
+        data: {
+          branchId,
+          userId,
+          action: 'UNPAID_ORDER_CANCELLED',
+          entity: 'Order',
+          entityId: id,
+          metadata: {
+            reason: dto.reason.trim(),
+            orderNumber: order.orderNumber,
+            previousStatus: order.status,
+            total: Number(order.total),
+          },
+        },
+      });
+      return cancelled;
+    });
   }
 
   private assertStatusChangeAllowed(
